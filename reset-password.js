@@ -105,7 +105,7 @@ async function main() {
   }
 
   console.log('\nHashing password…');
-  const hash = await bcrypt.hash(newPassword, 12);
+  const hash = bcrypt.hashSync(newPassword, 12);
   db.prepare("UPDATE settings SET value = ? WHERE key = 'password_hash'").run(hash);
   db.close();
 

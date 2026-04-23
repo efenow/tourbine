@@ -12,6 +12,7 @@
             <div class="alert alert-danger"><%= error %></div>
           <% } %>
           <form method="POST" action="/dashboard/login">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <div class="mb-4">
               <label for="password" class="form-label">Password</label>
               <input type="password" id="password" name="password" class="form-control"

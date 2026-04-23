@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const methodOverride = require('method-override');
 const session = require('express-session');
+const { csrfSync } = require('csrf-sync');
 const db = require('./src/db');
 
 const app = express();
@@ -40,6 +41,19 @@ app.use(session({
   }
 }));
 
+// CSRF protection (synchroniser token pattern — stores token in session)
+const { generateToken, csrfSynchronisedProtection } = csrfSync({
+  getTokenFromRequest: (req) => req.body && req.body._csrf,
+});
+
+app.use(csrfSynchronisedProtection);
+
+// Make CSRF token available in all EJS templates
+app.use((req, res, next) => {
+  try { res.locals.csrfToken = generateToken(req); } catch (e) { res.locals.csrfToken = ''; }
+  next();
+});
+
 app.use('/', require('./src/routes/index'));
 app.use('/tour', require('./src/routes/tours'));
 app.use('/dashboard', require('./src/routes/dashboard'));
@@ -49,7 +63,14 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
+  if (err.code === 'EBADCSRFTOKEN' || err.status === 403) {
+    if (!res.locals.csrfToken) {
+      try { res.locals.csrfToken = generateToken(req); } catch (e) { res.locals.csrfToken = ''; }
+    }
+    return res.status(403).render('error', { title: 'Forbidden', status: 403, message: 'Invalid or missing CSRF token.' });
+  }
   console.error(err.stack);
+  if (!res.locals.csrfToken) res.locals.csrfToken = '';
   res.status(500).render('error', { title: 'Error', status: 500, message: err.message || 'Internal Server Error' });
 });
 
@@ -57,4 +78,6 @@ app.listen(PORT, () => {
   console.log(`Tourbine running at http://localhost:${PORT}`);
   console.log(`Dashboard: http://localhost:${PORT}/dashboard`);
 });
+
+
 

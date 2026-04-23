@@ -57,6 +57,7 @@
                     <a href="/tour/<%= tour.slug %>" class="btn btn-outline-success btn-sm" target="_blank"><i class="bi bi-eye"></i> View</a>
                     <form action="/dashboard/tours/<%= tour.id %>?_method=DELETE" method="POST" class="d-inline"
                           onsubmit="return confirm('Delete tour &quot;<%= tour.name %>&quot;? This cannot be undone.')">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                       <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
                     </form>
                   </div>

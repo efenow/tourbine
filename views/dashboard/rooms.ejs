@@ -66,11 +66,13 @@
                     <a href="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/edit" class="btn btn-outline-secondary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
                     <% if (!room.is_default) { %>
                       <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/set-default" method="POST" class="d-inline">
+                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                         <button type="submit" class="btn btn-outline-warning btn-sm"><i class="bi bi-star"></i> Set Default</button>
                       </form>
                     <% } %>
                     <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>?_method=DELETE" method="POST" class="d-inline"
                           onsubmit="return confirm('Delete room &quot;<%= room.name %>&quot;?')">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                       <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
                     </form>
                   </div>

@@ -51,7 +51,10 @@ function uniqueRoomSlug(tourId, name, excludeId = null) {
 function unlinkFile(imagePath) {
   if (!imagePath) return;
   try {
-    fs.unlinkSync(path.join(__dirname, '..', '..', 'public', imagePath));
+    const uploadsDir = path.resolve(path.join(__dirname, '..', 'public', 'uploads'));
+    const resolved = path.resolve(path.join(__dirname, '..', 'public', imagePath));
+    if (!resolved.startsWith(uploadsDir + path.sep) && resolved !== uploadsDir) return;
+    fs.unlinkSync(resolved);
   } catch (e) { /* file may not exist */ }
 }
 

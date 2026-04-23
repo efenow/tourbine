@@ -18,6 +18,7 @@
       <% } %>
       <form method="POST" enctype="multipart/form-data"
             action="<%= room ? `/dashboard/tours/${tour.id}/rooms/${room.id}?_method=PUT` : `/dashboard/tours/${tour.id}/rooms` %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="mb-3">
           <label for="name" class="form-label">Room Name <span class="text-danger">*</span></label>
           <input type="text" id="name" name="name" class="form-control" required
@@ -90,6 +91,7 @@
                 </div>
                 <form action="/dashboard/hotspots/<%= hs.id %>?_method=DELETE" method="POST"
                       onsubmit="return confirm('Delete this hotspot?')">
+                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
                 </form>
               </li>
@@ -101,6 +103,7 @@
           <hr>
           <h6>Add Hotspot</h6>
           <form method="POST" action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/hotspots">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <div class="mb-2">
               <label class="form-label small">Link to Room</label>
               <select name="to_room_id" class="form-select form-select-sm" required>
