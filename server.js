@@ -63,7 +63,7 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
-  if (err.code === 'EBADCSRFTOKEN' || err.status === 403) {
+  if (err.code === 'EBADCSRFTOKEN') {
     if (!res.locals.csrfToken) {
       try { res.locals.csrfToken = generateToken(req); } catch (e) { res.locals.csrfToken = ''; }
     }
