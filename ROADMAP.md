@@ -1,20 +1,6 @@
 # Tourbine Roadmap
 
-This document tracks planned features and improvements for Tourbine. Items are grouped by theme and roughly ordered by priority within each section.
-
----
-
-## ✅ Done
-
-- **Core application** — Express/Node.js server, SQLite database, EJS templating
-- **Tour management** — Create, edit, and delete tours with slugged URLs
-- **Room management** — Upload Photo Sphere images (JPEG/PNG/WebP, up to 100 MB), set default room, reorder
-- **Hotspot linking** — Connect rooms with pitch/yaw hotspots so viewers can navigate between spaces
-- **Admin dashboard** — Full CRUD UI at `/dashboard` for tours, rooms, and hotspots
-- **Matterport-inspired viewer UI** — Full-screen Pannellum 360° viewer with:
-  - Dark glassy top-left pill showing tour name + location pin
-  - Bottom toolbar (collapse, auto-rotate, fullscreen, share/copy-link, dashboard shortcut)
-  - Horizontal room filmstrip with thumbnail cards, active highlight, and 360° badge
+Planned features for upcoming releases.
 
 ---
 
@@ -71,36 +57,3 @@ Allow self-hosters to securely expose their Tourbine instance to the internet wi
   5. Run `cloudflared tunnel run tourbine` or set up as a system service
 - Document that `secure: true` on the session cookie is handled automatically when `X-Forwarded-Proto: https` is present (Express `trust proxy` setting)
 - Provide a sample `cloudflared` config file (`cloudflared-config.example.yml`) that points to `localhost:3000`
-
----
-
-## 🗺️ Viewer Enhancements
-
-- **Floor plan / map overlay** — optional mini-map showing room layout with current position marker
-- **Info hotspots** — hotspots that open an info card (text + optional image) instead of navigating to another room
-- **Gyroscope / device-orientation mode** — on mobile, tilt device to look around
-- **Embed code generator** — one-click `<iframe>` snippet for embedding a tour on an external website
-- **Tour password protection** — optional per-tour passcode for private tours (separate from the dashboard password)
-
----
-
-## 🛠️ Dashboard & Management
-
-- **Drag-and-drop room reordering** — reorder rooms in the filmstrip via drag-and-drop in the dashboard
-- **Bulk image upload** — upload all room images at once; auto-create rooms from filenames
-- **Tour duplication** — clone an existing tour with all rooms and hotspot relationships
-- **EXIF-based initial pitch/yaw** — auto-detect camera orientation from photo sphere metadata
-- **Storage stats** — show disk usage per tour in the dashboard
-
----
-
-## ⚙️ Operations & Deployment
-
-- **Docker image** — official `Dockerfile` and `docker-compose.yml` for one-command deployment
-- **Backup / restore CLI** — `backup.js` script that exports the DB + uploads to a `.tar.gz` archive
-- **Health check endpoint** — `GET /health` returning `{ status: "ok", version, uptime }` for use with uptime monitors
-- **Reverse proxy guide** — documented Nginx and Caddy configuration examples with HTTPS
-
----
-
-*This roadmap reflects current intentions and is subject to change. Contributions and feature requests are welcome via GitHub Issues.*
