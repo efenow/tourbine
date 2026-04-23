@@ -1,0 +1,10 @@
+<%- include('partials/header', { title }) %>
+<main class="container py-5">
+  <div class="text-center">
+    <h1 class="display-4 text-danger"><%= status %></h1>
+    <p class="lead"><%= message %></p>
+    <a href="javascript:history.back()" class="btn btn-outline-secondary me-2">Go Back</a>
+    <a href="/" class="btn btn-primary">Home</a>
+  </div>
+</main>
+<%- include('partials/footer', {}) %>

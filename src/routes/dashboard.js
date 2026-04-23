@@ -1,0 +1,269 @@
+const express = require('express');
+const router = express.Router();
+const path = require('path');
+const fs = require('fs');
+const db = require('../db');
+const upload = require('../upload');
+const slugify = require('slugify');
+
+function makeSlug(text) {
+  return slugify(text, { lower: true, strict: true, trim: true });
+}
+
+function uniqueTourSlug(name, excludeId = null) {
+  let base = makeSlug(name);
+  let slug = base;
+  let i = 1;
+  while (true) {
+    const existing = db.prepare('SELECT id FROM tours WHERE slug = ?').get(slug);
+    if (!existing || existing.id === excludeId) break;
+    slug = `${base}-${i++}`;
+  }
+  return slug;
+}
+
+function uniqueRoomSlug(tourId, name, excludeId = null) {
+  let base = makeSlug(name);
+  let slug = base;
+  let i = 1;
+  while (true) {
+    const existing = db.prepare('SELECT id FROM rooms WHERE tour_id = ? AND slug = ?').get(tourId, slug);
+    if (!existing || existing.id === excludeId) break;
+    slug = `${base}-${i++}`;
+  }
+  return slug;
+}
+
+function unlinkFile(imagePath) {
+  if (!imagePath) return;
+  try {
+    fs.unlinkSync(path.join(__dirname, '..', '..', 'public', imagePath));
+  } catch (e) { /* file may not exist */ }
+}
+
+// GET /dashboard
+router.get('/', (req, res) => {
+  const tours = db.prepare(`
+    SELECT t.*, COUNT(r.id) AS room_count
+    FROM tours t
+    LEFT JOIN rooms r ON r.tour_id = t.id
+    GROUP BY t.id
+    ORDER BY t.created_at DESC
+  `).all();
+  const totalRooms = db.prepare('SELECT COUNT(*) AS cnt FROM rooms').get().cnt;
+  res.render('dashboard/index', { title: 'Dashboard', tours, totalRooms });
+});
+
+// GET /dashboard/tours/new
+router.get('/tours/new', (req, res) => {
+  res.render('dashboard/tour-form', { title: 'New Tour', tour: null, error: null });
+});
+
+// POST /dashboard/tours
+router.post('/tours', (req, res) => {
+  const { name, description } = req.body;
+  if (!name || !name.trim()) {
+    return res.render('dashboard/tour-form', { title: 'New Tour', tour: null, error: 'Name is required' });
+  }
+  const slug = uniqueTourSlug(name.trim());
+  db.prepare('INSERT INTO tours (name, slug, description) VALUES (?, ?, ?)').run(name.trim(), slug, description || '');
+  res.redirect('/dashboard');
+});
+
+// GET /dashboard/tours/:id/edit
+router.get('/tours/:id/edit', (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  res.render('dashboard/tour-form', { title: 'Edit Tour', tour, error: null });
+});
+
+// PUT /dashboard/tours/:id
+router.put('/tours/:id', (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const { name, description } = req.body;
+  if (!name || !name.trim()) {
+    return res.render('dashboard/tour-form', { title: 'Edit Tour', tour, error: 'Name is required' });
+  }
+  const slug = uniqueTourSlug(name.trim(), tour.id);
+  db.prepare('UPDATE tours SET name = ?, slug = ?, description = ? WHERE id = ?').run(name.trim(), slug, description || '', tour.id);
+  res.redirect('/dashboard');
+});
+
+// DELETE /dashboard/tours/:id
+router.delete('/tours/:id', (req, res) => {
+  const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ?').all(req.params.id);
+  for (const room of rooms) unlinkFile(room.image_path);
+  db.prepare('DELETE FROM tours WHERE id = ?').run(req.params.id);
+  res.redirect('/dashboard');
+});
+
+// GET /dashboard/tours/:tourId/rooms
+router.get('/tours/:tourId/rooms', (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? ORDER BY is_default DESC, created_at ASC').all(tour.id);
+  res.render('dashboard/rooms', { title: `Rooms — ${tour.name}`, tour, rooms });
+});
+
+// GET /dashboard/tours/:tourId/rooms/new
+router.get('/tours/:tourId/rooms/new', (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: null });
+});
+
+// POST /dashboard/tours/:tourId/rooms
+router.post('/tours/:tourId/rooms', upload.single('image'), (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+
+  const { name, initial_pitch, initial_yaw, is_default } = req.body;
+  if (!name || !name.trim()) {
+    if (req.file) unlinkFile('uploads/' + req.file.filename);
+    return res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: 'Room name is required' });
+  }
+
+  const slug = uniqueRoomSlug(tour.id, name.trim());
+  const image_path = req.file ? 'uploads/' + req.file.filename : null;
+
+  const existingRooms = db.prepare('SELECT COUNT(*) AS cnt FROM rooms WHERE tour_id = ?').get(tour.id).cnt;
+  const setDefault = is_default === 'on' || existingRooms === 0;
+
+  if (setDefault) {
+    db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
+  }
+
+  db.prepare('INSERT INTO rooms (tour_id, name, slug, image_path, initial_pitch, initial_yaw, is_default) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+    tour.id, name.trim(), slug, image_path,
+    parseFloat(initial_pitch) || 0,
+    parseFloat(initial_yaw) || 0,
+    setDefault ? 1 : 0
+  );
+
+  res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+});
+
+// GET /dashboard/tours/:tourId/rooms/:roomId/edit
+router.get('/tours/:tourId/rooms/:roomId/edit', (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  const allRooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? AND id != ? ORDER BY name ASC').all(tour.id, room.id);
+  const hotspots = db.prepare(`
+    SELECT h.*, r.name AS to_name
+    FROM hotspots h
+    JOIN rooms r ON r.id = h.to_room_id
+    WHERE h.from_room_id = ?
+  `).all(room.id);
+
+  res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: null });
+});
+
+// PUT /dashboard/tours/:tourId/rooms/:roomId
+router.put('/tours/:tourId/rooms/:roomId', upload.single('image'), (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  const { name, initial_pitch, initial_yaw, is_default } = req.body;
+  if (!name || !name.trim()) {
+    if (req.file) unlinkFile('uploads/' + req.file.filename);
+    const allRooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? AND id != ? ORDER BY name ASC').all(tour.id, room.id);
+    const hotspots = db.prepare(`SELECT h.*, r.name AS to_name FROM hotspots h JOIN rooms r ON r.id = h.to_room_id WHERE h.from_room_id = ?`).all(room.id);
+    return res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: 'Room name is required' });
+  }
+
+  const slug = uniqueRoomSlug(tour.id, name.trim(), room.id);
+  let image_path = room.image_path;
+
+  if (req.file) {
+    unlinkFile(room.image_path);
+    image_path = 'uploads/' + req.file.filename;
+  }
+
+  const setDefault = is_default === 'on';
+  if (setDefault) {
+    db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
+  }
+
+  db.prepare('UPDATE rooms SET name = ?, slug = ?, image_path = ?, initial_pitch = ?, initial_yaw = ?, is_default = ? WHERE id = ?').run(
+    name.trim(), slug, image_path,
+    parseFloat(initial_pitch) || 0,
+    parseFloat(initial_yaw) || 0,
+    setDefault ? 1 : (room.is_default || 0),
+    room.id
+  );
+
+  res.redirect(`/dashboard/tours/${tour.id}/rooms/${room.id}/edit`);
+});
+
+// DELETE /dashboard/tours/:tourId/rooms/:roomId
+router.delete('/tours/:tourId/rooms/:roomId', (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  unlinkFile(room.image_path);
+  db.prepare('DELETE FROM rooms WHERE id = ?').run(room.id);
+
+  if (room.is_default) {
+    const next = db.prepare('SELECT id FROM rooms WHERE tour_id = ? ORDER BY created_at ASC LIMIT 1').get(tour.id);
+    if (next) db.prepare('UPDATE rooms SET is_default = 1 WHERE id = ?').run(next.id);
+  }
+
+  res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+});
+
+// POST /dashboard/tours/:tourId/rooms/:roomId/set-default
+router.post('/tours/:tourId/rooms/:roomId/set-default', (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
+  db.prepare('UPDATE rooms SET is_default = 1 WHERE id = ?').run(room.id);
+
+  res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+});
+
+// POST /dashboard/tours/:tourId/rooms/:roomId/hotspots
+router.post('/tours/:tourId/rooms/:roomId/hotspots', (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  const { to_room_id, pitch, yaw, text } = req.body;
+
+  const toRoom = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(to_room_id, tour.id);
+  if (!toRoom) return res.status(400).render('error', { title: 'Error', status: 400, message: 'Invalid target room' });
+
+  db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text) VALUES (?, ?, ?, ?, ?)').run(
+    room.id, toRoom.id, parseFloat(pitch) || 0, parseFloat(yaw) || 0, text || ''
+  );
+
+  res.redirect(`/dashboard/tours/${tour.id}/rooms/${room.id}/edit`);
+});
+
+// DELETE /dashboard/hotspots/:id
+router.delete('/hotspots/:id', (req, res) => {
+  const hotspot = db.prepare(`
+    SELECT h.*, r.tour_id, r.id AS room_id
+    FROM hotspots h
+    JOIN rooms r ON r.id = h.from_room_id
+    WHERE h.id = ?
+  `).get(req.params.id);
+
+  if (!hotspot) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Hotspot not found' });
+
+  db.prepare('DELETE FROM hotspots WHERE id = ?').run(hotspot.id);
+  res.redirect(`/dashboard/tours/${hotspot.tour_id}/rooms/${hotspot.room_id}/edit`);
+});
+
+module.exports = router;

@@ -1,0 +1,40 @@
+/* Tour card hover effect */
+.tour-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.tour-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+/* Cover placeholder for tours without images */
+.cover-placeholder {
+  background: #1a1a2e;
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Stat cards */
+.stat-card {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+}
+
+/* Dashboard header */
+.dashboard-header {
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #dee2e6;
+}
+
+/* Body layout */
+body {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+main {
+  flex: 1;
+}

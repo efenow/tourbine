@@ -1,0 +1,136 @@
+<%- include('../partials/header', { title }) %>
+<main class="container py-5">
+  <nav aria-label="breadcrumb" class="mb-4">
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item"><a href="/dashboard">Dashboard</a></li>
+      <li class="breadcrumb-item"><a href="/dashboard/tours/<%= tour.id %>/rooms"><%= tour.name %></a></li>
+      <li class="breadcrumb-item active"><%= room ? room.name : 'New Room' %></li>
+    </ol>
+  </nav>
+
+  <div class="card mx-auto" style="max-width: 700px;">
+    <div class="card-header">
+      <h5 class="mb-0"><%= room ? 'Edit Room' : 'New Room' %></h5>
+    </div>
+    <div class="card-body">
+      <% if (error) { %>
+        <div class="alert alert-danger"><%= error %></div>
+      <% } %>
+      <form method="POST" enctype="multipart/form-data"
+            action="<%= room ? `/dashboard/tours/${tour.id}/rooms/${room.id}?_method=PUT` : `/dashboard/tours/${tour.id}/rooms` %>">
+        <div class="mb-3">
+          <label for="name" class="form-label">Room Name <span class="text-danger">*</span></label>
+          <input type="text" id="name" name="name" class="form-control" required
+                 value="<%= room ? room.name : '' %>" placeholder="e.g. Entrance Hall">
+        </div>
+
+        <div class="mb-3">
+          <label for="image" class="form-label">Photo Sphere Image</label>
+          <% if (room && room.image_path) { %>
+            <div class="mb-2">
+              <img src="/<%= room.image_path %>" class="img-thumbnail" style="max-height:120px;" alt="Current image">
+              <div class="text-muted small mt-1">Current image — upload a new one to replace it</div>
+            </div>
+          <% } %>
+          <input type="file" id="image" name="image" class="form-control"
+                 accept="image/jpeg,image/png,image/webp">
+          <div class="form-text">JPEG, PNG, or WebP. Max 100 MB. Use an equirectangular (2:1) image for best results.</div>
+        </div>
+
+        <div class="row g-3 mb-3">
+          <div class="col">
+            <label for="initial_pitch" class="form-label">Initial Pitch</label>
+            <input type="number" id="initial_pitch" name="initial_pitch" class="form-control"
+                   min="-90" max="90" step="0.1" value="<%= room ? room.initial_pitch : 0 %>">
+            <div class="form-text">Vertical angle (-90 to 90)</div>
+          </div>
+          <div class="col">
+            <label for="initial_yaw" class="form-label">Initial Yaw</label>
+            <input type="number" id="initial_yaw" name="initial_yaw" class="form-control"
+                   min="-180" max="180" step="0.1" value="<%= room ? room.initial_yaw : 0 %>">
+            <div class="form-text">Horizontal angle (-180 to 180)</div>
+          </div>
+        </div>
+
+        <div class="mb-3 form-check">
+          <input type="checkbox" id="is_default" name="is_default" class="form-check-input"
+                 <%= room && room.is_default ? 'checked' : '' %>>
+          <label for="is_default" class="form-check-label">Set as default room</label>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-check-lg"></i> <%= room ? 'Save Changes' : 'Create Room' %>
+          </button>
+          <a href="/dashboard/tours/<%= tour.id %>/rooms" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <% if (room) { %>
+    <div class="card mx-auto mt-4" style="max-width: 700px;">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-arrow-right-circle"></i> Hotspots</h5>
+      </div>
+      <div class="card-body">
+        <% if (hotspots.length === 0) { %>
+          <p class="text-muted small">No hotspots yet.</p>
+        <% } else { %>
+          <ul class="list-group list-group-flush mb-3">
+            <% for (const hs of hotspots) { %>
+              <li class="list-group-item d-flex justify-content-between align-items-start">
+                <div>
+                  <i class="bi bi-arrow-right-circle text-primary"></i>
+                  <strong><%= room.name %></strong> → <strong><%= hs.to_name %></strong>
+                  <div class="text-muted small">
+                    Pitch: <%= hs.pitch %>, Yaw: <%= hs.yaw %>
+                    <% if (hs.text) { %> — "<%= hs.text %>"<% } %>
+                  </div>
+                </div>
+                <form action="/dashboard/hotspots/<%= hs.id %>?_method=DELETE" method="POST"
+                      onsubmit="return confirm('Delete this hotspot?')">
+                  <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+                </form>
+              </li>
+            <% } %>
+          </ul>
+        <% } %>
+
+        <% if (allRooms.length > 0) { %>
+          <hr>
+          <h6>Add Hotspot</h6>
+          <form method="POST" action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/hotspots">
+            <div class="mb-2">
+              <label class="form-label small">Link to Room</label>
+              <select name="to_room_id" class="form-select form-select-sm" required>
+                <option value="">Select a room…</option>
+                <% for (const r of allRooms) { %>
+                  <option value="<%= r.id %>"><%= r.name %></option>
+                <% } %>
+              </select>
+            </div>
+            <div class="row g-2 mb-2">
+              <div class="col">
+                <label class="form-label small">Pitch</label>
+                <input type="number" name="pitch" class="form-control form-control-sm" value="0" step="0.1" min="-90" max="90">
+              </div>
+              <div class="col">
+                <label class="form-label small">Yaw</label>
+                <input type="number" name="yaw" class="form-control form-control-sm" value="0" step="0.1" min="-180" max="180">
+              </div>
+            </div>
+            <div class="mb-2">
+              <label class="form-label small">Label (optional)</label>
+              <input type="text" name="text" class="form-control form-control-sm" placeholder="e.g. Go to kitchen">
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Add Hotspot</button>
+          </form>
+        <% } else { %>
+          <p class="text-muted small mt-2">Add more rooms to this tour to create hotspots.</p>
+        <% } %>
+      </div>
+    </div>
+  <% } %>
+</main>
+<%- include('../partials/footer', {}) %>

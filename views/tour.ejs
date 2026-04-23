@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= tour.name %> — Tourbine</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; }
+    #panorama { width: 100vw; height: 100vh; }
+    #tour-overlay { position: fixed; top: 0; left: 0; right: 0; z-index: 100; pointer-events: none; }
+    #tour-header { pointer-events: all; background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent); padding: 1rem 1.5rem; display: flex; align-items: center; gap: 1rem; }
+    #room-sidebar { position: fixed; right: 0; top: 0; bottom: 0; z-index: 200; width: 240px; background: rgba(20,20,20,0.92); backdrop-filter: blur(8px); transform: translateX(100%); transition: transform 0.3s ease; overflow-y: auto; }
+    #room-sidebar.open { transform: translateX(0); }
+    #sidebar-toggle { position: fixed; right: 1rem; top: 1rem; z-index: 300; }
+    .room-thumb { width: 100%; height: 80px; object-fit: cover; border-radius: 4px; }
+    .room-item { cursor: pointer; padding: 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.1); transition: background 0.2s; color: #fff; }
+    .room-item:hover { background: rgba(255,255,255,0.1); }
+    .room-item.active { background: rgba(255,255,255,0.15); border-left: 3px solid #0d6efd; }
+    .room-item.no-image { opacity: 0.5; cursor: not-allowed; }
+    .no-tour-msg { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: #fff; }
+  </style>
+</head>
+<body>
+
+<% if (!firstScene) { %>
+  <div class="no-tour-msg">
+    <i class="bi bi-camera-video-off display-1 mb-3 d-block text-secondary"></i>
+    <h2><%= tour.name %></h2>
+    <p class="text-secondary">No 360° images have been uploaded for this tour yet.</p>
+    <a href="/" class="btn btn-outline-light mt-2"><i class="bi bi-arrow-left"></i> Back to Tours</a>
+  </div>
+<% } else { %>
+  <div id="panorama"></div>
+
+  <div id="tour-overlay">
+    <div id="tour-header">
+      <a href="/" class="btn btn-sm btn-outline-light"><i class="bi bi-arrow-left"></i></a>
+      <span class="text-white fw-semibold"><%= tour.name %></span>
+    </div>
+  </div>
+
+  <button id="sidebar-toggle" class="btn btn-dark btn-sm">
+    <i class="bi bi-layout-sidebar-reverse"></i> Rooms
+  </button>
+
+  <div id="room-sidebar">
+    <div class="p-3 border-bottom border-secondary">
+      <h6 class="text-white mb-0">Rooms</h6>
+    </div>
+    <% for (const room of rooms) { %>
+      <div class="room-item <%= room.image_path ? '' : 'no-image' %>" data-scene="room-<%= room.id %>">
+        <% if (room.image_path) { %>
+          <img src="/<%= room.image_path %>" class="room-thumb mb-1" alt="<%= room.name %>">
+        <% } %>
+        <div class="small fw-semibold"><%= room.name %></div>
+        <% if (!room.image_path) { %>
+          <div class="text-secondary" style="font-size:0.7rem;">No image</div>
+        <% } %>
+      </div>
+    <% } %>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+  <script>
+    const scenes = <%- scenes %>;
+    const firstScene = '<%= firstScene %>';
+    let currentScene = firstScene;
+
+    const viewer = pannellum.viewer('panorama', {
+      default: {
+        firstScene: firstScene,
+        sceneFadeDuration: 1000,
+        autoLoad: true,
+        showControls: true,
+        compass: false
+      },
+      scenes: scenes
+    });
+
+    viewer.on('scenechange', function(sceneId) {
+      currentScene = sceneId;
+      document.querySelectorAll('.room-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.scene === sceneId);
+      });
+    });
+
+    document.querySelectorAll('.room-item:not(.no-image)').forEach(el => {
+      el.addEventListener('click', () => {
+        viewer.loadScene(el.dataset.scene);
+        if (window.innerWidth < 768) document.getElementById('room-sidebar').classList.remove('open');
+      });
+    });
+
+    document.getElementById('sidebar-toggle').addEventListener('click', () => {
+      document.getElementById('room-sidebar').classList.toggle('open');
+    });
+
+    document.querySelectorAll('.room-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.scene === firstScene);
+    });
+  </script>
+<% } %>
+</body>
+</html>
