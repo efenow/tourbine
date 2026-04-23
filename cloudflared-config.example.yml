@@ -1,0 +1,20 @@
+# cloudflared-config.example.yml
+#
+# Cloudflare Tunnel configuration for Tourbine
+#
+# 1. Install cloudflared:        https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/
+# 2. Authenticate:               cloudflared tunnel login
+# 3. Create a tunnel:            cloudflared tunnel create tourbine
+# 4. Copy this file:             cp cloudflared-config.example.yml ~/.cloudflared/config.yml
+# 5. Edit tunnel UUID and hostname below, then save.
+# 6. Route traffic to the tunnel:  cloudflared tunnel route dns tourbine your-subdomain.example.com
+# 7. Run the tunnel:             cloudflared tunnel run tourbine
+#    (or set it up as a system service — see the cloudflared docs)
+
+tunnel: <your-tunnel-uuid>         # e.g. 6ff42ae2-765d-4d41-8fd4-a1c7c0ad2571
+credentials-file: /home/<user>/.cloudflared/<your-tunnel-uuid>.json
+
+ingress:
+  - hostname: tourbine.example.com  # Replace with your (sub)domain
+    service: http://localhost:3000
+  - service: http_status:404

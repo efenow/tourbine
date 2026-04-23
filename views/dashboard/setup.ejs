@@ -1,0 +1,35 @@
+<%- include('../partials/header', { title }) %>
+<main class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-sm-10 col-md-6 col-lg-5">
+      <div class="text-center mb-4">
+        <i class="bi bi-shield-lock display-4 text-primary"></i>
+        <h1 class="h3 mt-2">Protect Your Dashboard</h1>
+        <p class="text-muted">Create a password to secure the Tourbine dashboard.</p>
+      </div>
+      <div class="card shadow-sm">
+        <div class="card-body p-4">
+          <% if (error) { %>
+            <div class="alert alert-danger"><%= error %></div>
+          <% } %>
+          <form method="POST" action="/dashboard/setup">
+            <div class="mb-3">
+              <label for="password" class="form-label">Password</label>
+              <input type="password" id="password" name="password" class="form-control"
+                     minlength="8" required autofocus placeholder="Minimum 8 characters">
+            </div>
+            <div class="mb-4">
+              <label for="confirm" class="form-label">Confirm Password</label>
+              <input type="password" id="confirm" name="confirm" class="form-control"
+                     minlength="8" required placeholder="Repeat password">
+            </div>
+            <button type="submit" class="btn btn-primary w-100">
+              <i class="bi bi-check-circle"></i> Set Password & Enter Dashboard
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+<%- include('../partials/footer', {}) %>

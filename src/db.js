@@ -14,6 +14,11 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS tours (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

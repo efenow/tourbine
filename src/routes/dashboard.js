@@ -2,9 +2,23 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
+const bcrypt = require('bcrypt');
+const rateLimit = require('express-rate-limit');
 const db = require('../db');
 const upload = require('../upload');
 const slugify = require('slugify');
+const { isPasswordSet, requireSetup, requireAuth } = require('../auth');
+
+const BCRYPT_ROUNDS = 12;
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: 'Too many login attempts. Please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+});
 
 function makeSlug(text) {
   return slugify(text, { lower: true, strict: true, trim: true });
@@ -40,6 +54,60 @@ function unlinkFile(imagePath) {
     fs.unlinkSync(path.join(__dirname, '..', '..', 'public', imagePath));
   } catch (e) { /* file may not exist */ }
 }
+
+// GET /dashboard/setup
+router.get('/setup', (req, res) => {
+  if (isPasswordSet()) return res.redirect('/dashboard/login');
+  res.render('dashboard/setup', { title: 'Create Password', error: null });
+});
+
+// POST /dashboard/setup
+router.post('/setup', (req, res) => {
+  if (isPasswordSet()) return res.redirect('/dashboard');
+  const { password, confirm } = req.body;
+  if (!password || password.length < 8) {
+    return res.render('dashboard/setup', { title: 'Create Password', error: 'Password must be at least 8 characters.' });
+  }
+  if (password !== confirm) {
+    return res.render('dashboard/setup', { title: 'Create Password', error: 'Passwords do not match.' });
+  }
+  const hash = bcrypt.hashSync(password, BCRYPT_ROUNDS);
+  db.prepare("INSERT INTO settings (key, value) VALUES ('password_hash', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(hash);
+  req.session.authenticated = true;
+  req.session.save(() => res.redirect('/dashboard'));
+});
+
+// GET /dashboard/login
+router.get('/login', (req, res) => {
+  if (!isPasswordSet()) return res.redirect('/dashboard/setup');
+  if (req.session && req.session.authenticated) return res.redirect('/dashboard');
+  res.render('dashboard/login', { title: 'Login', error: null });
+});
+
+// POST /dashboard/login
+router.post('/login', loginLimiter, (req, res) => {
+  if (!isPasswordSet()) return res.redirect('/dashboard/setup');
+  const { password } = req.body;
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'password_hash'").get();
+  if (!row || !bcrypt.compareSync(password || '', row.value)) {
+    return res.render('dashboard/login', { title: 'Login', error: 'Incorrect password.' });
+  }
+  req.session.regenerate((err) => {
+    if (err) return res.render('dashboard/login', { title: 'Login', error: 'Session error. Please try again.' });
+    req.session.authenticated = true;
+    const returnTo = req.session.returnTo || '/dashboard';
+    delete req.session.returnTo;
+    req.session.save(() => res.redirect(returnTo));
+  });
+});
+
+// POST /dashboard/logout
+router.post('/logout', (req, res) => {
+  req.session.destroy(() => res.redirect('/dashboard/login'));
+});
+
+// All routes below require authentication
+router.use(requireAuth);
 
 // GET /dashboard
 router.get('/', (req, res) => {
