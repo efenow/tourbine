@@ -95,11 +95,10 @@ router.post('/login', loginLimiter, (req, res) => {
   if (!row || !bcrypt.compareSync(password || '', row.value)) {
     return res.render('dashboard/login', { title: 'Login', error: 'Incorrect password.' });
   }
+  const returnTo = req.session.returnTo || '/dashboard';
   req.session.regenerate((err) => {
     if (err) return res.render('dashboard/login', { title: 'Login', error: 'Session error. Please try again.' });
     req.session.authenticated = true;
-    const returnTo = req.session.returnTo || '/dashboard';
-    delete req.session.returnTo;
     req.session.save(() => res.redirect(returnTo));
   });
 });
@@ -185,34 +184,43 @@ router.get('/tours/:tourId/rooms/new', (req, res) => {
 });
 
 // POST /dashboard/tours/:tourId/rooms
-router.post('/tours/:tourId/rooms', upload.single('image'), (req, res) => {
-  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
-  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+router.post('/tours/:tourId/rooms', (req, res, next) => {
+  upload.single('image')(req, res, (err) => {
+    const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+    if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
 
-  const { name, initial_pitch, initial_yaw, is_default } = req.body;
-  if (!name || !name.trim()) {
-    if (req.file) unlinkFile('uploads/' + req.file.filename);
-    return res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: 'Room name is required' });
-  }
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Image is too large. Maximum size is 100 MB.'
+        : (err.message || 'File upload failed.');
+      return res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: msg });
+    }
 
-  const slug = uniqueRoomSlug(tour.id, name.trim());
-  const image_path = req.file ? 'uploads/' + req.file.filename : null;
+    const { name, initial_pitch, initial_yaw, is_default } = req.body;
+    if (!name || !name.trim()) {
+      if (req.file) unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: 'Room name is required' });
+    }
 
-  const existingRooms = db.prepare('SELECT COUNT(*) AS cnt FROM rooms WHERE tour_id = ?').get(tour.id).cnt;
-  const setDefault = is_default === 'on' || existingRooms === 0;
+    const slug = uniqueRoomSlug(tour.id, name.trim());
+    const image_path = req.file ? 'uploads/' + req.file.filename : null;
 
-  if (setDefault) {
-    db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
-  }
+    const existingRooms = db.prepare('SELECT COUNT(*) AS cnt FROM rooms WHERE tour_id = ?').get(tour.id).cnt;
+    const setDefault = is_default === 'on' || existingRooms === 0;
 
-  db.prepare('INSERT INTO rooms (tour_id, name, slug, image_path, initial_pitch, initial_yaw, is_default) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-    tour.id, name.trim(), slug, image_path,
-    parseFloat(initial_pitch) || 0,
-    parseFloat(initial_yaw) || 0,
-    setDefault ? 1 : 0
-  );
+    if (setDefault) {
+      db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
+    }
 
-  res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+    db.prepare('INSERT INTO rooms (tour_id, name, slug, image_path, initial_pitch, initial_yaw, is_default) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      tour.id, name.trim(), slug, image_path,
+      parseFloat(initial_pitch) || 0,
+      parseFloat(initial_yaw) || 0,
+      setDefault ? 1 : 0
+    );
+
+    res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+  });
 });
 
 // GET /dashboard/tours/:tourId/rooms/:roomId/edit
@@ -234,42 +242,52 @@ router.get('/tours/:tourId/rooms/:roomId/edit', (req, res) => {
 });
 
 // PUT /dashboard/tours/:tourId/rooms/:roomId
-router.put('/tours/:tourId/rooms/:roomId', upload.single('image'), (req, res) => {
-  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
-  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
-  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
-  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+router.put('/tours/:tourId/rooms/:roomId', (req, res, next) => {
+  upload.single('image')(req, res, (err) => {
+    const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+    if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+    const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+    if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
 
-  const { name, initial_pitch, initial_yaw, is_default } = req.body;
-  if (!name || !name.trim()) {
-    if (req.file) unlinkFile('uploads/' + req.file.filename);
     const allRooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? AND id != ? ORDER BY name ASC').all(tour.id, room.id);
-    const hotspots = db.prepare(`SELECT h.*, r.name AS to_name FROM hotspots h JOIN rooms r ON r.id = h.to_room_id WHERE h.from_room_id = ?`).all(room.id);
-    return res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: 'Room name is required' });
-  }
+    const hotspots = db.prepare('SELECT h.*, r.name AS to_name FROM hotspots h JOIN rooms r ON r.id = h.to_room_id WHERE h.from_room_id = ?').all(room.id);
 
-  const slug = uniqueRoomSlug(tour.id, name.trim(), room.id);
-  let image_path = room.image_path;
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Image is too large. Maximum size is 100 MB.'
+        : (err.message || 'File upload failed.');
+      return res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: msg });
+    }
 
-  if (req.file) {
-    unlinkFile(room.image_path);
-    image_path = 'uploads/' + req.file.filename;
-  }
+    const { name, initial_pitch, initial_yaw, is_default } = req.body;
+    if (!name || !name.trim()) {
+      if (req.file) unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: 'Room name is required' });
+    }
 
-  const setDefault = is_default === 'on';
-  if (setDefault) {
-    db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
-  }
+    const slug = uniqueRoomSlug(tour.id, name.trim(), room.id);
+    let image_path = room.image_path;
 
-  db.prepare('UPDATE rooms SET name = ?, slug = ?, image_path = ?, initial_pitch = ?, initial_yaw = ?, is_default = ? WHERE id = ?').run(
-    name.trim(), slug, image_path,
-    parseFloat(initial_pitch) || 0,
-    parseFloat(initial_yaw) || 0,
-    setDefault ? 1 : (room.is_default || 0),
-    room.id
-  );
+    if (req.file) {
+      unlinkFile(room.image_path);
+      image_path = 'uploads/' + req.file.filename;
+    }
 
-  res.redirect(`/dashboard/tours/${tour.id}/rooms/${room.id}/edit`);
+    const setDefault = is_default === 'on';
+    if (setDefault) {
+      db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
+    }
+
+    db.prepare('UPDATE rooms SET name = ?, slug = ?, image_path = ?, initial_pitch = ?, initial_yaw = ?, is_default = ? WHERE id = ?').run(
+      name.trim(), slug, image_path,
+      parseFloat(initial_pitch) || 0,
+      parseFloat(initial_yaw) || 0,
+      setDefault ? 1 : (room.is_default || 0),
+      room.id
+    );
+
+    res.redirect(`/dashboard/tours/${tour.id}/rooms/${room.id}/edit`);
+  });
 });
 
 // DELETE /dashboard/tours/:tourId/rooms/:roomId

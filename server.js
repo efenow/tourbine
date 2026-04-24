@@ -42,8 +42,11 @@ app.use(session({
 }));
 
 // CSRF protection (synchroniser token pattern — stores token in session)
+// getTokenFromRequest checks both body (URL-encoded forms) and query string
+// (multipart/form-data forms, where req.body is not yet parsed by multer at middleware time)
 const { generateToken, csrfSynchronisedProtection } = csrfSync({
-  getTokenFromRequest: (req) => req.body && req.body._csrf,
+  getTokenFromRequest: (req) =>
+    (req.body && req.body._csrf) || (req.query && req.query._csrf),
 });
 
 app.use(csrfSynchronisedProtection);

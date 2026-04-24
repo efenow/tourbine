@@ -42,3 +42,41 @@ Protect the `/dashboard` from unauthorized access when the instance is exposed t
 - `secure: true` on session cookies is handled automatically via Express `trust proxy` setting
 - Provided `cloudflared-config.example.yml` pointing to `localhost:3000`
 
+---
+
+## 🐳 Docker
+
+### ✅ Docker support
+**Status: Completed**
+
+**Implemented:**
+- `Dockerfile` using `node:20-alpine` with a non-root user and native addon build tools
+- `docker-compose.yml` with named volumes for persistent data (`tourbine_data`) and uploads (`tourbine_uploads`)
+- `.dockerignore` to keep the image lean
+- Docker quickstart section added to README
+
+---
+
+## 🐛 Bug Fixes
+
+### ✅ CSRF token not validated for multipart room forms
+**Status: Completed**
+
+Rooms use `enctype="multipart/form-data"` for image uploads. At the time the global CSRF middleware runs, `express.urlencoded` has not parsed the body (multer handles multipart bodies at the route level later). This meant the CSRF token in the form body was invisible to the CSRF check, causing all room-creation and room-edit submissions to fail with a 403.
+
+**Fix:** Pass `_csrf` as a query-string parameter on the form action URL for multipart room forms, and update `getTokenFromRequest` to check `req.query._csrf` as a fallback to `req.body._csrf`.
+
+### ✅ Session `returnTo` lost after `session.regenerate()`
+**Status: Completed**
+
+The login handler called `req.session.regenerate()` to prevent session-fixation attacks, but then tried to read `req.session.returnTo` from the new (empty) session. `returnTo` was always `undefined`, so users were always redirected to `/dashboard` regardless of the URL they tried to access before logging in.
+
+**Fix:** Capture `returnTo` from the old session before calling `regenerate()`.
+
+### ✅ Multer upload errors show generic 500 page
+**Status: Completed**
+
+When multer rejected a file (wrong MIME type or file too large), the error propagated to the global error handler, showing a generic error page instead of the room form with a helpful message.
+
+**Fix:** Wrap the room create/edit routes to call `upload.single()` with an explicit callback, catch errors, and re-render the form with a user-friendly error message.
+

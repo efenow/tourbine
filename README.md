@@ -11,14 +11,51 @@ Self-hosted Open Source 360° web tour software with:
 
 ## Getting Started
 
+### Option A — Node.js directly
+
 ```bash
 npm install
 npm start
 ```
 
+### Option B — Docker (recommended for production)
+
+```bash
+docker compose up -d
+```
+
 Open `http://localhost:3000` in your browser. On first visit to `/dashboard`, you will be prompted to create a password.
 
 ---
+
+## 🐳 Docker
+
+The easiest way to run Tourbine in production is with Docker.
+
+### Requirements
+- [Docker](https://docs.docker.com/get-docker/) with Docker Compose
+
+### Quickstart
+
+```bash
+# Build and start in the background
+docker compose up -d --build
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+Data (SQLite database and uploaded images) is automatically persisted in Docker named volumes (`tourbine_data` and `tourbine_uploads`), surviving container restarts and upgrades.
+
+### Upgrading
+
+```bash
+docker compose pull   # if using a registry image
+docker compose up -d --build
+```
 
 ## 🌐 Exposing to the Internet via Cloudflare Tunnel
 
