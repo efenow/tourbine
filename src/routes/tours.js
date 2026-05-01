@@ -77,7 +77,8 @@ router.get('/:tourSlug/embed', (req, res) => {
     rooms,
     scenes: JSON.stringify(scenesObj),
     firstScene,
-    embedMode: true
+    embedMode: true,
+    isAuthenticated: false
   });
 });
 

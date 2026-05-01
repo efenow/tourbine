@@ -1,5 +1,5 @@
 <%- include('../partials/header', { title, extraHead: room && room.image_path
-  ? '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"><style>#pnlm-preview,#pnlm-hotspot-picker{height:320px;border-radius:8px;overflow:hidden;position:relative;}#pnlm-preview .pnlm-about-msg,#pnlm-hotspot-picker .pnlm-about-msg{display:none!important;}.pick-crosshair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:100;}.pick-crosshair::before,.pick-crosshair::after{content:"";position:absolute;background:rgba(255,200,0,0.9);}.pick-crosshair::before{width:2px;height:24px;top:-12px;left:-1px;}.pick-crosshair::after{width:24px;height:2px;top:-1px;left:-12px;}</style>'
+  ? '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"><link rel="stylesheet" href="/css/pannellum-picker.css">'
   : '' }) %>
 <main class="container py-5">
   <nav aria-label="breadcrumb" class="mb-4">

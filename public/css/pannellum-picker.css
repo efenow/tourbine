@@ -1,0 +1,47 @@
+/* Pannellum mini-viewer used in the room edit form for visual hotspot/view placement */
+
+#pnlm-preview,
+#pnlm-hotspot-picker {
+  height: 320px;
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+}
+
+#pnlm-preview .pnlm-about-msg,
+#pnlm-hotspot-picker .pnlm-about-msg {
+  display: none !important;
+}
+
+/* Yellow crosshair overlay shown in the centre of the mini-viewers */
+.pick-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 100;
+}
+
+.pick-crosshair::before,
+.pick-crosshair::after {
+  content: "";
+  position: absolute;
+  background: rgba(255, 200, 0, 0.9);
+}
+
+/* Vertical bar */
+.pick-crosshair::before {
+  width: 2px;
+  height: 24px;
+  top: -12px;
+  left: -1px;
+}
+
+/* Horizontal bar */
+.pick-crosshair::after {
+  width: 24px;
+  height: 2px;
+  top: -1px;
+  left: -12px;
+}
