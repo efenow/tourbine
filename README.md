@@ -91,7 +91,7 @@ docker compose up -d --build
    ```bash
    cloudflared tunnel run tourbine
    ```
-   Or [install it as a system service](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/run-tunnel/as-a-service/).
+   Or [install it as a system service](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/as-a-service/).
 
 > **Note:** Tourbine sets `trust proxy` automatically, so session cookies gain the `Secure` flag when requests arrive over HTTPS via the tunnel.
 
