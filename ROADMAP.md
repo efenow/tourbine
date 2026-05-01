@@ -80,3 +80,38 @@ When multer rejected a file (wrong MIME type or file too large), the error propa
 
 **Fix:** Wrap the room create/edit routes to call `upload.single()` with an explicit callback, catch errors, and re-render the form with a user-friendly error message.
 
+### ✅ `unlinkFile` deletes files from wrong directory
+**Status: Completed**
+
+`dashboard.js` lives in `src/routes/`. The `unlinkFile` helper resolved the uploads directory with one `..` (→ `src/public/uploads/`) instead of two (→ `public/uploads/`), so image files were never deleted from disk when rooms or tours were removed.
+
+**Fix:** Changed both path.join calls to use `'..', '..', 'public', 'uploads'`.
+
+---
+
+## 🔀 Room Reordering
+
+### ✅ Manual room order in tours
+**Status: Completed**
+
+**Implemented:**
+- Added `sort_order INTEGER DEFAULT 0` column to the `rooms` table with a safe `ALTER TABLE` migration in `db.js`
+- Existing rows are backfilled with their rowid so the initial order is stable
+- New rooms are inserted with `sort_order = MAX(sort_order) + 1` so they always go to the end
+- Room list in tour viewer (`/tour/:slug`) now uses `ORDER BY sort_order ASC`
+- Dashboard rooms list uses `ORDER BY sort_order ASC`
+- Added `POST /dashboard/tours/:tourId/rooms/:roomId/move-up` and `move-down` routes that swap `sort_order` values with the adjacent room
+- Dashboard rooms table has an **Order** column with up/down arrow buttons
+
+---
+
+## 📋 Embed Code
+
+### ✅ Embeddable tour view + embed code snippet
+**Status: Completed**
+
+**Implemented:**
+- Added `/tour/:slug/embed` route — renders the tour in an iframe-friendly stripped view (no back button, no share button, no "manage in dashboard" link)
+- Dashboard rooms page has an **Embed Code** button that opens a modal with a pre-filled `<iframe>` snippet (URL built from `window.location.origin` so it always reflects the correct host)
+- Copy-to-clipboard button in the modal
+

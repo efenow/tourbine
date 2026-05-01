@@ -53,4 +53,12 @@ db.exec(`
   );
 `);
 
+// Safe migrations — these are no-ops if the column already exists
+try { db.exec('ALTER TABLE rooms ADD COLUMN sort_order INTEGER DEFAULT 0'); } catch (e) {}
+
+// Backfill sort_order for existing rows that are still 0 (set to rowid so existing tours get stable order)
+db.exec(`
+  UPDATE rooms SET sort_order = id WHERE sort_order = 0
+`);
+
 module.exports = db;

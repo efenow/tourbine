@@ -147,7 +147,9 @@
     <i class="bi bi-camera-video-off"></i>
     <h3><%= tour.name %></h3>
     <p>No 360° images have been uploaded for this tour yet.</p>
-    <a href="/" class="btn-ghost"><i class="bi bi-arrow-left"></i> Back to Tours</a>
+    <% if (!embedMode) { %>
+      <a href="/" class="btn-ghost"><i class="bi bi-arrow-left"></i> Back to Tours</a>
+    <% } %>
   </div>
 
 <% } else { %>
@@ -155,6 +157,7 @@
   <!-- 360° viewer -->
   <div id="panorama"></div>
 
+  <% if (!embedMode) { %>
   <!-- Top-left: back + tour name -->
   <div id="top-bar">
     <a href="/" id="back-btn" title="Back to Tours"><i class="bi bi-arrow-left"></i></a>
@@ -166,6 +169,7 @@
       </div>
     </div>
   </div>
+  <% } %>
 
   <!-- Bottom: toolbar + filmstrip -->
   <div id="bottom-ui">
@@ -186,16 +190,20 @@
 
       <!-- Right controls -->
       <div class="tb-group">
+        <% if (!embedMode) { %>
         <button id="share-btn" class="tb-btn" title="Copy link">
           <i class="bi bi-share"></i>
         </button>
+        <% } %>
         <button id="fullscreen-btn" class="tb-btn" title="Fullscreen">
           <i class="bi bi-fullscreen"></i>
         </button>
+        <% if (!embedMode) { %>
         <a href="/dashboard/tours/<%= tour.id %>/rooms"
            class="tb-btn" title="Manage in Dashboard">
           <i class="bi bi-sliders"></i>
         </a>
+        <% } %>
       </div>
     </div>
 
@@ -289,13 +297,16 @@
     });
 
     /* ── Share (copy URL) ────────────────────────── */
-    document.getElementById('share-btn').addEventListener('click', () => {
-      navigator.clipboard.writeText(window.location.href).then(() => {
-        const icon = document.getElementById('share-btn').querySelector('i');
-        icon.className = 'bi bi-check2';
-        setTimeout(() => { icon.className = 'bi bi-share'; }, 2000);
-      }).catch(() => {});
-    });
+    const shareBtn = document.getElementById('share-btn');
+    if (shareBtn) {
+      shareBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(window.location.href).then(() => {
+          const icon = shareBtn.querySelector('i');
+          icon.className = 'bi bi-check2';
+          setTimeout(() => { icon.className = 'bi bi-share'; }, 2000);
+        }).catch(() => {});
+      });
+    }
   </script>
 
 <% } %>

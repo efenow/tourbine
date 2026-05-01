@@ -2,13 +2,13 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-router.get('/:tourSlug', (req, res) => {
-  const tour = db.prepare('SELECT * FROM tours WHERE slug = ?').get(req.params.tourSlug);
-  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+function buildTourData(tourSlug) {
+  const tour = db.prepare('SELECT * FROM tours WHERE slug = ?').get(tourSlug);
+  if (!tour) return null;
 
   const rooms = db.prepare(`
     SELECT * FROM rooms WHERE tour_id = ?
-    ORDER BY is_default DESC, created_at ASC
+    ORDER BY sort_order ASC, created_at ASC
   `).all(tour.id);
 
   const hotspots = db.prepare(`
@@ -44,12 +44,36 @@ router.get('/:tourSlug', (req, res) => {
   const defaultRoom = rooms.find(r => r.is_default && r.image_path) || rooms.find(r => r.image_path);
   const firstScene = defaultRoom ? 'room-' + defaultRoom.id : null;
 
+  return { tour, rooms, scenesObj, firstScene };
+}
+
+router.get('/:tourSlug', (req, res) => {
+  const data = buildTourData(req.params.tourSlug);
+  if (!data) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+
+  const { tour, rooms, scenesObj, firstScene } = data;
   res.render('tour', {
     title: tour.name,
     tour,
     rooms,
     scenes: JSON.stringify(scenesObj),
-    firstScene
+    firstScene,
+    embedMode: false
+  });
+});
+
+router.get('/:tourSlug/embed', (req, res) => {
+  const data = buildTourData(req.params.tourSlug);
+  if (!data) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+
+  const { tour, rooms, scenesObj, firstScene } = data;
+  res.render('tour', {
+    title: tour.name,
+    tour,
+    rooms,
+    scenes: JSON.stringify(scenesObj),
+    firstScene,
+    embedMode: true
   });
 });
 
