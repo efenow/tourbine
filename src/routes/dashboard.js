@@ -20,6 +20,17 @@ const loginLimiter = rateLimit({
   skipSuccessfulRequests: true,
 });
 
+// General rate limiter applied to the entire dashboard to reduce abuse risk
+const dashboardLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply dashboard limiter to all /dashboard routes
+router.use(dashboardLimiter);
+
 function makeSlug(text) {
   return slugify(text, { lower: true, strict: true, trim: true });
 }
@@ -53,8 +64,11 @@ function unlinkFile(imagePath) {
   try {
     // dashboard.js lives in src/routes/ — go up two levels to reach public/
     const uploadsDir = path.resolve(path.join(__dirname, '..', '..', 'public', 'uploads'));
-    const resolved = path.resolve(path.join(__dirname, '..', '..', 'public', imagePath));
-    if (!resolved.startsWith(uploadsDir + path.sep) && resolved !== uploadsDir) return;
+    // Use path.basename to prevent any directory traversal — stored paths are
+    // always relative like "uploads/filename.ext", so basename gives "filename.ext"
+    const filename = path.basename(imagePath);
+    if (!filename || filename === '.' || filename === '..') return;
+    const resolved = path.join(uploadsDir, filename);
     fs.unlinkSync(resolved);
   } catch (e) { /* file may not exist */ }
 }
