@@ -175,6 +175,42 @@ router.put('/tours/:id', (req, res) => {
   res.redirect('/dashboard');
 });
 
+// POST /dashboard/tours/:id/duplicate
+router.post('/tours/:id/duplicate', (req, res) => {
+  const original = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
+  if (!original) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+
+  const newSlug = uniqueTourSlug('Copy of ' + original.name);
+  const insertTour = db.prepare('INSERT INTO tours (name, slug, description) VALUES (?, ?, ?)');
+  const newTourId = insertTour.run('Copy of ' + original.name, newSlug, original.description || '').lastInsertRowid;
+
+  // Duplicate rooms (without image files — images must be re-uploaded)
+  const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? ORDER BY sort_order ASC, created_at ASC').all(original.id);
+  const roomIdMap = {}; // original room id → new room id
+
+  for (const room of rooms) {
+    const newRoomSlug = uniqueRoomSlug(newTourId, room.name);
+    const result = db.prepare(
+      'INSERT INTO rooms (tour_id, name, slug, image_path, initial_pitch, initial_yaw, is_default, sort_order) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)'
+    ).run(newTourId, room.name, newRoomSlug, room.initial_pitch, room.initial_yaw, room.is_default, room.sort_order);
+    roomIdMap[room.id] = result.lastInsertRowid;
+  }
+
+  // Duplicate hotspots (only those where both from and to rooms are in the duplicated set)
+  const hotspots = db.prepare('SELECT * FROM hotspots WHERE from_room_id IN (SELECT id FROM rooms WHERE tour_id = ?)').all(original.id);
+  for (const hs of hotspots) {
+    const newFromId = roomIdMap[hs.from_room_id];
+    const newToId = roomIdMap[hs.to_room_id];
+    if (newFromId && newToId) {
+      db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text) VALUES (?, ?, ?, ?, ?)').run(
+        newFromId, newToId, hs.pitch, hs.yaw, hs.text
+      );
+    }
+  }
+
+  res.redirect(`/dashboard/tours/${newTourId}/rooms`);
+});
+
 // DELETE /dashboard/tours/:id
 router.delete('/tours/:id', (req, res) => {
   const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ?').all(req.params.id);

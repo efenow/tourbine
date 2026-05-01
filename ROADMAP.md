@@ -115,3 +115,44 @@ When multer rejected a file (wrong MIME type or file too large), the error propa
 - Dashboard rooms page has an **Embed Code** button that opens a modal with a pre-filled `<iframe>` snippet (URL built from `window.location.origin` so it always reflects the correct host)
 - Copy-to-clipboard button in the modal
 
+---
+
+## 🔒 "Manage in Dashboard" button visibility
+
+### ✅ Dashboard button hidden from public visitors
+**Status: Completed**
+
+The tour viewer (`/tour/:slug`) showed a "Manage in Dashboard" toolbar button (⚙ sliders icon) to all visitors, including unauthenticated public users.
+
+**Fix:** Pass `isAuthenticated` from the tour route to the template. The button is now only rendered when `!embedMode && isAuthenticated`.
+
+---
+
+## 🖱️ Visual Hotspot Placement
+
+### ✅ Click-to-pick pitch/yaw in room editor
+**Status: Completed**
+
+Previously, users had to manually type numerical pitch/yaw values to place hotspots — impossible without trial and error.
+
+**Implemented:**
+- Room edit form now embeds a pannellum 360° mini-viewer when the room has an image
+- **"Set initial view from panorama"** button — opens the viewer with a crosshair overlay; user navigates the panorama and clicks "Use this view" to auto-fill `initial_pitch` / `initial_yaw`
+- **"Pick position from panorama"** button in the Add Hotspot section — same crosshair approach, fills the hotspot pitch/yaw fields
+- Viewers are loaded lazily (only when the toggle button is clicked)
+- Pannellum CSS/JS loaded via CDN only on pages where a room image exists
+
+---
+
+## 🗂️ Tour Duplication
+
+### ✅ Duplicate a tour with one click
+**Status: Completed**
+
+**Implemented:**
+- **Duplicate** button on every tour row in the Dashboard
+- `POST /dashboard/tours/:id/duplicate` creates a new tour named "Copy of …" with a unique slug
+- All rooms are copied (name, slug, pitch/yaw, default flag, sort order) — images are **not** copied (user re-uploads); image_path is set to NULL so room cards clearly show "No image"
+- All hotspots that link two rooms within the same tour are duplicated with mapped room IDs
+- After duplication, the browser is redirected to the new tour's rooms page
+

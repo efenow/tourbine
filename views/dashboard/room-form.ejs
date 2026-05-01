@@ -1,4 +1,6 @@
-<%- include('../partials/header', { title }) %>
+<%- include('../partials/header', { title, extraHead: room && room.image_path
+  ? '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"><style>#pnlm-preview,#pnlm-hotspot-picker{height:320px;border-radius:8px;overflow:hidden;position:relative;}#pnlm-preview .pnlm-about-msg,#pnlm-hotspot-picker .pnlm-about-msg{display:none!important;}.pick-crosshair{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:100;}.pick-crosshair::before,.pick-crosshair::after{content:"";position:absolute;background:rgba(255,200,0,0.9);}.pick-crosshair::before{width:2px;height:24px;top:-12px;left:-1px;}.pick-crosshair::after{width:24px;height:2px;top:-1px;left:-12px;}</style>'
+  : '' }) %>
 <main class="container py-5">
   <nav aria-label="breadcrumb" class="mb-4">
     <ol class="breadcrumb">
@@ -40,7 +42,7 @@
           <div class="form-text">JPEG, PNG, or WebP. Max 100 MB. Use an equirectangular (2:1) image for best results.</div>
         </div>
 
-        <div class="row g-3 mb-3">
+        <div class="row g-3 mb-2">
           <div class="col">
             <label for="initial_pitch" class="form-label">Initial Pitch</label>
             <input type="number" id="initial_pitch" name="initial_pitch" class="form-control"
@@ -54,6 +56,24 @@
             <div class="form-text">Horizontal angle (-180 to 180)</div>
           </div>
         </div>
+
+        <% if (room && room.image_path) { %>
+        <!-- 360° preview for setting initial pitch/yaw -->
+        <div class="mb-3">
+          <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="toggle-preview-btn">
+            <i class="bi bi-camera"></i> Set initial view from panorama
+          </button>
+          <div id="preview-section" style="display:none;">
+            <div id="pnlm-preview" class="mb-2"></div>
+            <div class="d-flex align-items-center gap-2">
+              <span class="text-muted small"><i class="bi bi-arrows-move"></i> Drag to navigate — the crosshair marks the center</span>
+              <button type="button" class="btn btn-sm btn-success ms-auto" id="capture-initial-btn">
+                <i class="bi bi-check-lg"></i> Use this view
+              </button>
+            </div>
+          </div>
+        </div>
+        <% } %>
 
         <div class="mb-3 form-check">
           <input type="checkbox" id="is_default" name="is_default" class="form-check-input"
@@ -104,7 +124,7 @@
         <% if (allRooms.length > 0) { %>
           <hr>
           <h6>Add Hotspot</h6>
-          <form method="POST" action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/hotspots">
+          <form method="POST" action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/hotspots" id="add-hotspot-form">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <div class="mb-2">
               <label class="form-label small">Link to Room</label>
@@ -118,13 +138,29 @@
             <div class="row g-2 mb-2">
               <div class="col">
                 <label class="form-label small">Pitch</label>
-                <input type="number" name="pitch" class="form-control form-control-sm" value="0" step="0.1" min="-90" max="90">
+                <input type="number" name="pitch" id="hs-pitch" class="form-control form-control-sm" value="0" step="0.1" min="-90" max="90">
               </div>
               <div class="col">
                 <label class="form-label small">Yaw</label>
-                <input type="number" name="yaw" class="form-control form-control-sm" value="0" step="0.1" min="-180" max="180">
+                <input type="number" name="yaw" id="hs-yaw" class="form-control form-control-sm" value="0" step="0.1" min="-180" max="180">
               </div>
             </div>
+            <% if (room.image_path) { %>
+            <div class="mb-2">
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-picker-btn">
+                <i class="bi bi-crosshair"></i> Pick position from panorama
+              </button>
+              <div id="picker-section" style="display:none;" class="mt-2">
+                <div id="pnlm-hotspot-picker" class="mb-2"></div>
+                <div class="d-flex align-items-center gap-2">
+                  <span class="text-muted small"><i class="bi bi-arrows-move"></i> Aim the crosshair at the hotspot position</span>
+                  <button type="button" class="btn btn-sm btn-success ms-auto" id="capture-hs-btn">
+                    <i class="bi bi-check-lg"></i> Use crosshair position
+                  </button>
+                </div>
+              </div>
+            </div>
+            <% } %>
             <div class="mb-2">
               <label class="form-label small">Label (optional)</label>
               <input type="text" name="text" class="form-control form-control-sm" placeholder="e.g. Go to kitchen">
@@ -138,4 +174,90 @@
     </div>
   <% } %>
 </main>
+
+<% if (room && room.image_path) { %>
+<script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+<script>
+  const PANORAMA_URL = '/<%= room.image_path %>';
+  const INIT_PITCH   = <%= room.initial_pitch || 0 %>;
+  const INIT_YAW     = <%= room.initial_yaw || 0 %>;
+
+  /* ── Initial view picker ──────────────────────────── */
+  let previewViewer = null;
+
+  document.getElementById('toggle-preview-btn').addEventListener('click', () => {
+    const section = document.getElementById('preview-section');
+    if (section.style.display === 'none') {
+      section.style.display = 'block';
+      if (!previewViewer) {
+        previewViewer = pannellum.viewer('pnlm-preview', {
+          type: 'equirectangular',
+          panorama: PANORAMA_URL,
+          pitch: INIT_PITCH,
+          yaw: INIT_YAW,
+          autoLoad: true,
+          showControls: false,
+          compass: false,
+          mouseZoom: false,
+        });
+        // overlay crosshair
+        const ch = document.createElement('div');
+        ch.className = 'pick-crosshair';
+        document.getElementById('pnlm-preview').appendChild(ch);
+      }
+    } else {
+      section.style.display = 'none';
+    }
+  });
+
+  document.getElementById('capture-initial-btn').addEventListener('click', () => {
+    if (!previewViewer) return;
+    const p = previewViewer.getPitch().toFixed(1);
+    const y = previewViewer.getYaw().toFixed(1);
+    document.getElementById('initial_pitch').value = p;
+    document.getElementById('initial_yaw').value = y;
+    document.getElementById('preview-section').style.display = 'none';
+  });
+
+  <% if (allRooms.length > 0) { %>
+  /* ── Hotspot position picker ──────────────────────── */
+  let pickerViewer = null;
+
+  document.getElementById('toggle-picker-btn').addEventListener('click', () => {
+    const section = document.getElementById('picker-section');
+    if (section.style.display === 'none') {
+      section.style.display = 'block';
+      if (!pickerViewer) {
+        pickerViewer = pannellum.viewer('pnlm-hotspot-picker', {
+          type: 'equirectangular',
+          panorama: PANORAMA_URL,
+          pitch: parseFloat(document.getElementById('hs-pitch').value) || 0,
+          yaw: parseFloat(document.getElementById('hs-yaw').value) || 0,
+          autoLoad: true,
+          showControls: false,
+          compass: false,
+          mouseZoom: false,
+        });
+        // overlay crosshair
+        const ch = document.createElement('div');
+        ch.className = 'pick-crosshair';
+        document.getElementById('pnlm-hotspot-picker').appendChild(ch);
+      }
+    } else {
+      section.style.display = 'none';
+    }
+  });
+
+  document.getElementById('capture-hs-btn').addEventListener('click', () => {
+    if (!pickerViewer) return;
+    const p = pickerViewer.getPitch().toFixed(1);
+    const y = pickerViewer.getYaw().toFixed(1);
+    document.getElementById('hs-pitch').value = p;
+    document.getElementById('hs-yaw').value = y;
+    document.getElementById('picker-section').style.display = 'none';
+  });
+  <% } %>
+</script>
+<% } %>
+
 <%- include('../partials/footer', {}) %>

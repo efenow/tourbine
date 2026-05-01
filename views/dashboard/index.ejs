@@ -55,6 +55,11 @@
                     <a href="/dashboard/tours/<%= tour.id %>/edit" class="btn btn-outline-secondary btn-sm"><i class="bi bi-pencil"></i> Edit Info</a>
                     <a href="/dashboard/tours/<%= tour.id %>/rooms" class="btn btn-outline-primary btn-sm"><i class="bi bi-door-open"></i> Rooms</a>
                     <a href="/tour/<%= tour.slug %>" class="btn btn-outline-success btn-sm" target="_blank"><i class="bi bi-eye"></i> View</a>
+                    <form action="/dashboard/tours/<%= tour.id %>/duplicate" method="POST" class="d-inline"
+                          title="Duplicate this tour (rooms are copied without images)">
+                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                      <button type="submit" class="btn btn-outline-secondary btn-sm"><i class="bi bi-copy"></i> Duplicate</button>
+                    </form>
                     <form action="/dashboard/tours/<%= tour.id %>?_method=DELETE" method="POST" class="d-inline"
                           onsubmit="return confirm('Delete tour &quot;<%= tour.name %>&quot;? This cannot be undone.')">
                       <input type="hidden" name="_csrf" value="<%= csrfToken %>">

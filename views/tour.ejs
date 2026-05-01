@@ -198,7 +198,7 @@
         <button id="fullscreen-btn" class="tb-btn" title="Fullscreen">
           <i class="bi bi-fullscreen"></i>
         </button>
-        <% if (!embedMode) { %>
+        <% if (!embedMode && isAuthenticated) { %>
         <a href="/dashboard/tours/<%= tour.id %>/rooms"
            class="tb-btn" title="Manage in Dashboard">
           <i class="bi bi-sliders"></i>
