@@ -7,6 +7,7 @@
     </ol>
   </nav>
 
+  <% const isSystemAdmin = currentUser && currentUser.role === 'system_admin'; %>
   <div class="d-flex justify-content-between align-items-center mb-4">
     <h2 class="h4 mb-0"><i class="bi bi-people"></i> User Management</h2>
   </div>
@@ -28,10 +29,11 @@
         <div class="col-md-3">
           <label class="form-label">Role</label>
           <select name="role" class="form-select" required>
-            <% const selectedRole = formData && formData.role ? formData.role : 'viewer'; %>
-            <option value="viewer" <%= selectedRole === 'viewer' ? 'selected' : '' %>>Viewer</option>
-            <option value="editor" <%= selectedRole === 'editor' ? 'selected' : '' %>>Editor</option>
-            <option value="admin" <%= selectedRole === 'admin' ? 'selected' : '' %>>Admin</option>
+            <% const selectedRole = formData && formData.role ? formData.role : 'user'; %>
+            <option value="user" <%= selectedRole === 'user' ? 'selected' : '' %>>User</option>
+            <% if (isSystemAdmin) { %>
+              <option value="admin" <%= selectedRole === 'admin' ? 'selected' : '' %>>Admin</option>
+            <% } %>
           </select>
         </div>
         <div class="col-md-2">
@@ -70,15 +72,20 @@
                 <% } %>
               </td>
               <td>
-                <form action="/dashboard/users/<%= user.id %>/role" method="POST" class="d-flex gap-2">
-                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                  <select name="role" class="form-select form-select-sm">
-                    <option value="viewer" <%= user.role === 'viewer' ? 'selected' : '' %>>Viewer</option>
-                    <option value="editor" <%= user.role === 'editor' ? 'selected' : '' %>>Editor</option>
-                    <option value="admin" <%= user.role === 'admin' ? 'selected' : '' %>>Admin</option>
-                  </select>
-                  <button type="submit" class="btn btn-outline-primary btn-sm">Update</button>
-                </form>
+                <% if (user.role === 'system_admin') { %>
+                  <span class="badge bg-primary">System Admin</span>
+                <% } else { %>
+                  <form action="/dashboard/users/<%= user.id %>/role" method="POST" class="d-flex gap-2">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <select name="role" class="form-select form-select-sm">
+                      <option value="user" <%= user.role === 'user' ? 'selected' : '' %>>User</option>
+                      <% if (isSystemAdmin || user.role === 'admin') { %>
+                        <option value="admin" <%= user.role === 'admin' ? 'selected' : '' %>>Admin</option>
+                      <% } %>
+                    </select>
+                    <button type="submit" class="btn btn-outline-primary btn-sm">Update</button>
+                  </form>
+                <% } %>
               </td>
               <td>
                 <form action="/dashboard/users/<%= user.id %>/password" method="POST" class="d-flex gap-2">
@@ -93,7 +100,7 @@
                       onsubmit="return confirm('Delete user <%= user.username %>?')">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <button type="submit" class="btn btn-outline-danger btn-sm"
-                          <%= currentUser && currentUser.id === user.id ? 'disabled' : '' %>>
+                          <%= currentUser && (currentUser.id === user.id || user.role === 'system_admin') ? 'disabled' : '' %>>
                     <i class="bi bi-trash"></i>
                   </button>
                 </form>

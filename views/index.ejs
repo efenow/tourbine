@@ -1,6 +1,6 @@
 <%- include('partials/header', { title, extraHead: '' }) %>
 <main class="container py-5">
-  <% const canEdit = currentUser && currentUser.role !== 'viewer'; %>
+  <% const canEdit = currentUser && (currentUser.role === 'admin' || currentUser.role === 'system_admin'); %>
   <div class="d-flex justify-content-between align-items-center mb-4">
     <h1 class="h2 mb-0">Virtual Tours</h1>
     <% if (canEdit) { %>
@@ -37,7 +37,9 @@
             </div>
             <div class="card-footer d-flex gap-2">
               <a href="/tour/<%= tour.slug %>" class="btn btn-primary btn-sm">View Tour</a>
-              <a href="/dashboard/tours/<%= tour.id %>/rooms" class="btn btn-outline-secondary btn-sm">Edit</a>
+              <% if (canEdit) { %>
+                <a href="/dashboard/tours/<%= tour.id %>/rooms" class="btn btn-outline-secondary btn-sm">Edit</a>
+              <% } %>
             </div>
           </div>
         </div>

@@ -8,7 +8,7 @@
     </ol>
   </nav>
 
-  <% const canEdit = currentUser && currentUser.role !== 'viewer'; %>
+  <% const canEdit = currentUser && (currentUser.role === 'admin' || currentUser.role === 'system_admin'); %>
   <div class="d-flex justify-content-between align-items-center mb-4">
     <h2 class="h4 mb-0">Rooms — <%= tour.name %></h2>
     <div class="d-flex gap-2">

@@ -57,7 +57,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'editor',
+    role TEXT NOT NULL DEFAULT 'user',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -78,12 +78,29 @@ db.exec(`
 try { db.exec('ALTER TABLE rooms ADD COLUMN sort_order INTEGER DEFAULT 0'); } catch (e) {}
 try { db.exec('ALTER TABLE tours ADD COLUMN cover_image_path TEXT DEFAULT NULL'); } catch (e) {}
 
+// Role migrations for legacy installs
+db.exec(`
+  UPDATE users SET role = 'user' WHERE role IN ('editor', 'viewer') OR role IS NULL;
+`);
+
+const systemAdmins = db.prepare("SELECT id FROM users WHERE role = 'system_admin' ORDER BY created_at ASC, id ASC").all();
+if (systemAdmins.length === 0) {
+  const oldestAdmin = db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY created_at ASC, id ASC LIMIT 1").get();
+  if (oldestAdmin) {
+    db.prepare("UPDATE users SET role = 'system_admin' WHERE id = ?").run(oldestAdmin.id);
+  }
+} else if (systemAdmins.length > 1) {
+  for (const extra of systemAdmins.slice(1)) {
+    db.prepare("UPDATE users SET role = 'admin' WHERE id = ?").run(extra.id);
+  }
+}
+
 // Backfill sort_order for existing rows that are still 0 (set to rowid so existing tours get stable order)
 db.exec(`
   UPDATE rooms SET sort_order = id WHERE sort_order = 0
 `);
 
-// Create an initial admin user from legacy password if no users exist yet
+// Create an initial system admin user from legacy password if no users exist yet
 const userCount = db.prepare('SELECT COUNT(*) AS cnt FROM users').get().cnt;
 if (userCount === 0) {
   const legacy = db.prepare("SELECT value FROM settings WHERE key = 'password_hash'").get();
@@ -91,7 +108,7 @@ if (userCount === 0) {
     db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(
       'admin',
       legacy.value,
-      'admin'
+      'system_admin'
     );
   }
 }

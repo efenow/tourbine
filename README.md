@@ -25,7 +25,7 @@ npm start
 docker compose up -d
 ```
 
-Open `http://localhost:3000` in your browser. On first visit to `/dashboard`, you will be prompted to create the first admin account.
+Open `http://localhost:3000` in your browser. On first visit to `/dashboard`, you will be prompted to create the system admin account.
 
 After setup, you can add additional users and roles from **Dashboard → Users**.
 
@@ -116,9 +116,9 @@ You'll be prompted to choose which username to reset.
 
 Tourbine supports multiple users with roles:
 
-- **Admin** — full access, including user management
-- **Editor** — create and edit tours, rooms, and hotspots
-- **Viewer** — read-only dashboard access
+- **System Admin** — full access, including user management and admin promotion
+- **Admin** — full access, including user management (cannot promote users to admin)
+- **User** — read-only dashboard access
 
 Manage roles at **Dashboard → Users**.
 

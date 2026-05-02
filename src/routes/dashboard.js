@@ -10,6 +10,9 @@ const slugify = require('slugify');
 const { isUserSetup, requireAuth, requireRole } = require('../auth');
 
 const BCRYPT_ROUNDS = 12;
+const ROLE_SYSTEM_ADMIN = 'system_admin';
+const ROLE_ADMIN = 'admin';
+const ROLE_USER = 'user';
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -94,7 +97,11 @@ router.post('/setup', (req, res) => {
     return res.render('dashboard/setup', { title: 'Create Admin Account', error: 'Passwords do not match.' });
   }
   const hash = bcrypt.hashSync(password, BCRYPT_ROUNDS);
-  const result = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(cleanUsername, hash, 'admin');
+  const result = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(
+    cleanUsername,
+    hash,
+    ROLE_SYSTEM_ADMIN
+  );
   req.session.userId = result.lastInsertRowid;
   req.session.save(() => res.redirect('/dashboard'));
 });
@@ -131,10 +138,14 @@ router.post('/logout', (req, res) => {
 // All routes below require authentication
 router.use(requireAuth);
 
-const requireEditor = requireRole(['admin', 'editor']);
-const requireAdmin = requireRole('admin');
+const requireEditor = requireRole([ROLE_SYSTEM_ADMIN, ROLE_ADMIN, ROLE_USER]);
+const requireAdmin = requireRole([ROLE_SYSTEM_ADMIN, ROLE_ADMIN]);
 
-const VALID_ROLES = ['admin', 'editor', 'viewer'];
+const VALID_ROLES = [ROLE_SYSTEM_ADMIN, ROLE_ADMIN, ROLE_USER];
+
+function canGrantAdmin(user) {
+  return user && user.role === ROLE_SYSTEM_ADMIN;
+}
 
 function renderUsersPage(res, error = null, formData = {}) {
   const users = db.prepare('SELECT id, username, role, created_at FROM users ORDER BY created_at ASC').all();
@@ -189,13 +200,16 @@ router.get('/users', requireAdmin, (req, res) => {
 router.post('/users', requireAdmin, (req, res) => {
   const { username, password, confirm, role } = req.body;
   const cleanUsername = (username || '').trim();
-  const selectedRole = role || 'viewer';
+  const selectedRole = role || ROLE_USER;
 
   if (!cleanUsername || cleanUsername.length < 3) {
     return renderUsersPage(res, 'Username must be at least 3 characters.', { username: cleanUsername, role: selectedRole });
   }
-  if (!VALID_ROLES.includes(selectedRole)) {
+  if (!VALID_ROLES.includes(selectedRole) || selectedRole === ROLE_SYSTEM_ADMIN) {
     return renderUsersPage(res, 'Invalid role selected.', { username: cleanUsername, role: selectedRole });
+  }
+  if (selectedRole === ROLE_ADMIN && !canGrantAdmin(req.user)) {
+    return renderUsersPage(res, 'Only the system admin can assign the admin role.', { username: cleanUsername, role: ROLE_USER });
   }
   if (!password || password.length < 8) {
     return renderUsersPage(res, 'Password must be at least 8 characters.', { username: cleanUsername, role: selectedRole });
@@ -219,14 +233,14 @@ router.post('/users/:id/role', requireAdmin, (req, res) => {
   const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'User not found' });
   const newRole = req.body.role;
-  if (!VALID_ROLES.includes(newRole)) {
+  if (!VALID_ROLES.includes(newRole) || newRole === ROLE_SYSTEM_ADMIN) {
     return renderUsersPage(res, 'Invalid role selected.');
   }
-  if (user.role === 'admin' && newRole !== 'admin') {
-    const adminCount = db.prepare("SELECT COUNT(*) AS cnt FROM users WHERE role = 'admin'").get().cnt;
-    if (adminCount <= 1) {
-      return renderUsersPage(res, 'At least one admin account is required.');
-    }
+  if (user.role === ROLE_SYSTEM_ADMIN) {
+    return renderUsersPage(res, 'The system admin role cannot be changed.');
+  }
+  if (newRole === ROLE_ADMIN && !canGrantAdmin(req.user)) {
+    return renderUsersPage(res, 'Only the system admin can promote users to admin.');
   }
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, user.id);
   res.redirect('/dashboard/users');
@@ -255,11 +269,8 @@ router.delete('/users/:id', requireAdmin, (req, res) => {
   if (req.user && req.user.id === user.id) {
     return renderUsersPage(res, 'You cannot delete your own account while logged in.');
   }
-  if (user.role === 'admin') {
-    const adminCount = db.prepare("SELECT COUNT(*) AS cnt FROM users WHERE role = 'admin'").get().cnt;
-    if (adminCount <= 1) {
-      return renderUsersPage(res, 'At least one admin account is required.');
-    }
+  if (user.role === ROLE_SYSTEM_ADMIN) {
+    return renderUsersPage(res, 'The system admin account cannot be deleted.');
   }
   db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
   res.redirect('/dashboard/users');

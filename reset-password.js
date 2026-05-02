@@ -7,7 +7,7 @@
  * Run with:  node reset-password.js
  *
  * Works even when the server is not running (accesses SQLite directly).
- * Requires that an admin user has already been created via /dashboard/setup.
+ * Requires that a system admin user has already been created via /dashboard/setup.
  */
 
 const path = require('path');
@@ -86,15 +86,21 @@ async function main() {
     process.exit(1);
   }
   if (!users || users.length === 0) {
-    console.error('No users exist yet. Use the /dashboard/setup page to create the first admin account.');
+    console.error('No users exist yet. Use the /dashboard/setup page to create the system admin account.');
     db.close();
     process.exit(1);
   }
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
 
-  const defaultUser = users.find(u => u.role === 'admin') || users[0];
-  console.log('Available users: ' + users.map(u => u.username + (u.role === 'admin' ? ' (admin)' : '')).join(', '));
+  const defaultUser = users.find(u => u.role === 'system_admin')
+    || users.find(u => u.role === 'admin')
+    || users[0];
+  console.log('Available users: ' + users.map(u => {
+    if (u.role === 'system_admin') return `${u.username} (system admin)`;
+    if (u.role === 'admin') return `${u.username} (admin)`;
+    return u.username;
+  }).join(', '));
   const usernameInput = await prompt(rl, `Username [${defaultUser.username}]: `);
   const targetUsername = (usernameInput || '').trim() || defaultUser.username;
   const targetUser = db.prepare('SELECT id, username FROM users WHERE username = ?').get(targetUsername);
