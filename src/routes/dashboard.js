@@ -248,8 +248,11 @@ router.post('/users/:id/role', requireAdmin, (req, res) => {
 
 // POST /dashboard/users/:id/password
 router.post('/users/:id/password', requireAdmin, (req, res) => {
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(req.params.id);
+  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'User not found' });
+  if (user.role === ROLE_SYSTEM_ADMIN && !canGrantAdmin(req.user)) {
+    return renderUsersPage(res, 'Only the system admin can reset the system admin password.');
+  }
   const { password, confirm } = req.body;
   if (!password || password.length < 8) {
     return renderUsersPage(res, 'Password must be at least 8 characters.');
@@ -566,6 +569,7 @@ router.post('/tours/:tourId/rooms/:roomId/hotspots', requireEditor, (req, res) =
 
   const toRoom = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(to_room_id, tour.id);
   if (!toRoom) return res.status(400).render('error', { title: 'Error', status: 400, message: 'Invalid target room' });
+  if (toRoom.id === room.id) return res.status(400).render('error', { title: 'Error', status: 400, message: 'A hotspot cannot link a room to itself' });
 
   db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text) VALUES (?, ?, ?, ?, ?)').run(
     room.id, toRoom.id, parseFloat(pitch) || 0, parseFloat(yaw) || 0, text || ''

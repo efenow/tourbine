@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, 'public/uploads/'),
+  destination: (req, file, cb) => cb(null, path.resolve(__dirname, '..', 'public', 'uploads')),
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
     cb(null, crypto.randomBytes(12).toString('hex') + ext);

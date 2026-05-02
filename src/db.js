@@ -8,7 +8,7 @@ const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-const db = new Database(path.join(dataDir, 'tourbine.db'));
+const db = new Database(process.env.DB_PATH || path.join(dataDir, 'tourbine.db'));
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');

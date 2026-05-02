@@ -37,7 +37,7 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: 'strict',
-    secure: app.get('env') !== 'development' && process.env.NODE_ENV !== 'development',
+    secure: process.env.NODE_ENV === 'production',
     maxAge: 24 * 60 * 60 * 1000 // 24 hours
   }
 }));
@@ -82,8 +82,12 @@ app.use((err, req, res, next) => {
   res.status(500).render('error', { title: 'Error', status: 500, message: err.message || 'Internal Server Error' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Tourbine running at http://localhost:${PORT}`);
-  console.log(`Dashboard: http://localhost:${PORT}/dashboard`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Tourbine running at http://localhost:${PORT}`);
+    console.log(`Dashboard: http://localhost:${PORT}/dashboard`);
+  });
+}
+
+module.exports = app;
 

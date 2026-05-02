@@ -88,12 +88,16 @@
                 <% } %>
               </td>
               <td>
+                <% if (user.role !== 'system_admin' || isSystemAdmin) { %>
                 <form action="/dashboard/users/<%= user.id %>/password" method="POST" class="d-flex gap-2">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <input type="password" name="password" class="form-control form-control-sm" placeholder="New password" minlength="8" required>
                   <input type="password" name="confirm" class="form-control form-control-sm" placeholder="Confirm" minlength="8" required>
                   <button type="submit" class="btn btn-outline-secondary btn-sm">Reset</button>
                 </form>
+                <% } else { %>
+                  <span class="text-muted small">—</span>
+                <% } %>
               </td>
               <td>
                 <form action="/dashboard/users/<%= user.id %>?_method=DELETE" method="POST"

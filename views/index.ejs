@@ -12,8 +12,10 @@
     <div class="card text-center py-5">
       <div class="card-body">
         <i class="bi bi-camera-video display-4 text-muted mb-3 d-block"></i>
-        <p class="text-muted mb-3">No tours yet. Create one in the Dashboard.</p>
-        <a href="/dashboard/tours/new" class="btn btn-primary">Create Your First Tour</a>
+        <p class="text-muted mb-3">No tours yet.<% if (canEdit) { %> Create one in the Dashboard.<% } %></p>
+        <% if (canEdit) { %>
+          <a href="/dashboard/tours/new" class="btn btn-primary">Create Your First Tour</a>
+        <% } %>
       </div>
     </div>
   <% } else { %>
