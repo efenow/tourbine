@@ -138,7 +138,7 @@ router.post('/logout', (req, res) => {
 // All routes below require authentication
 router.use(requireAuth);
 
-const requireEditor = requireRole([ROLE_SYSTEM_ADMIN, ROLE_ADMIN, ROLE_USER]);
+const requireEditor = requireRole([ROLE_SYSTEM_ADMIN, ROLE_ADMIN]);
 const requireAdmin = requireRole([ROLE_SYSTEM_ADMIN, ROLE_ADMIN]);
 
 const VALID_ROLES = [ROLE_SYSTEM_ADMIN, ROLE_ADMIN, ROLE_USER];
