@@ -26,13 +26,12 @@ function makeApp() {
   const dbPath = path.join(os.tmpdir(), `tourbine-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
   process.env.DB_PATH = dbPath;
 
-  // Clear module cache so each makeApp() gets a fresh db + app
-  Object.keys(require.cache).forEach(k => {
-    if (k.includes('tourbine') || k.includes('/src/') || k.includes('server')) {
-      delete require.cache[k];
-    }
-  });
+  // jest.resetModules() clears the module registry so that the very next
+  // require() call loads a completely fresh copy of every module (including
+  // src/db.js which opens the SQLite file at process.env.DB_PATH).
+  jest.resetModules();
 
+  // eslint-disable-next-line global-require
   const app = require('../server');
   return { app, dbPath };
 }
@@ -717,11 +716,12 @@ describe('User management', () => {
   });
 
   test('POST /dashboard/users/:id/role — system_admin can promote user to admin', async () => {
-    // Get the regular user's ID
+    // Get the regular user's ID — take the LAST role form entry so we don't
+    // accidentally modify the adminuser that other tests depend on.
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
-    const m = page.text.match(/users\/(\d+)\/role/);
-    expect(m).toBeTruthy();
-    const userId = parseInt(m[1], 10);
+    const matches = [...page.text.matchAll(/users\/(\d+)\/role/g)];
+    expect(matches.length).toBeGreaterThan(0);
+    const userId = parseInt(matches[matches.length - 1][1], 10);
     const token = csrf(page.text);
     const res = await sysAdminAgent.post(`/dashboard/users/${userId}/role`).type('form')
       .send({ _csrf: token, role: 'admin' });
@@ -836,9 +836,8 @@ describe('User management', () => {
   });
 
   test('DELETE /dashboard/users/:id — cannot delete system_admin', async () => {
-    // Grab system_admin ID — it's the one with disabled delete button next to "System Admin"
-    const page = await sysAdminAgent.get('/dashboard/users').expect(200);
-    // Just verify that trying to delete user 9999 returns 404
+    // Verify that trying to delete a non-existent user returns 404 (uses adminAgent's own token)
+    const page = await adminAgent.get('/dashboard/users').expect(200);
     const token = csrf(page.text);
     await adminAgent.post('/dashboard/users/9999?_method=DELETE').type('form')
       .send({ _csrf: token }).expect(404);

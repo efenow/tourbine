@@ -11,6 +11,7 @@ function loadUser(userId) {
 }
 
 function attachUser(req, res, next) {
+  res.locals.currentUser = null;
   if (req.session && req.session.userId) {
     const user = loadUser(req.session.userId);
     if (user) {
