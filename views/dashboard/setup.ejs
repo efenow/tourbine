@@ -4,8 +4,8 @@
     <div class="col-sm-10 col-md-6 col-lg-5">
       <div class="text-center mb-4">
         <i class="bi bi-shield-lock display-4 text-primary"></i>
-        <h1 class="h3 mt-2">Protect Your Dashboard</h1>
-        <p class="text-muted">Create a password to secure the Tourbine dashboard.</p>
+        <h1 class="h3 mt-2">Create Admin Account</h1>
+        <p class="text-muted">Set up the first admin user for the Tourbine dashboard.</p>
       </div>
       <div class="card shadow-sm">
         <div class="card-body p-4">
@@ -15,9 +15,14 @@
           <form method="POST" action="/dashboard/setup">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <div class="mb-3">
+              <label for="username" class="form-label">Username</label>
+              <input type="text" id="username" name="username" class="form-control"
+                     minlength="3" required autofocus placeholder="e.g. admin">
+            </div>
+            <div class="mb-3">
               <label for="password" class="form-label">Password</label>
               <input type="password" id="password" name="password" class="form-control"
-                     minlength="8" required autofocus placeholder="Minimum 8 characters">
+                     minlength="8" required placeholder="Minimum 8 characters">
             </div>
             <div class="mb-4">
               <label for="confirm" class="form-label">Confirm Password</label>
@@ -25,7 +30,7 @@
                      minlength="8" required placeholder="Repeat password">
             </div>
             <button type="submit" class="btn btn-primary w-100">
-              <i class="bi bi-check-circle"></i> Set Password & Enter Dashboard
+              <i class="bi bi-check-circle"></i> Create Admin & Enter Dashboard
             </button>
           </form>
         </div>

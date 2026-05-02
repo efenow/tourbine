@@ -102,20 +102,43 @@
         <% } else { %>
           <ul class="list-group list-group-flush mb-3">
             <% for (const hs of hotspots) { %>
-              <li class="list-group-item d-flex justify-content-between align-items-start">
-                <div>
-                  <i class="bi bi-arrow-right-circle text-primary"></i>
-                  <strong><%= room.name %></strong> → <strong><%= hs.to_name %></strong>
-                  <div class="text-muted small">
-                    Pitch: <%= hs.pitch %>, Yaw: <%= hs.yaw %>
-                    <% if (hs.text) { %> — "<%= hs.text %>"<% } %>
-                  </div>
+              <li class="list-group-item">
+                <div class="d-flex flex-wrap gap-2 align-items-end">
+                  <form action="/dashboard/hotspots/<%= hs.id %>?_method=PUT" method="POST" class="row g-2 align-items-end flex-grow-1">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <div class="col-12 col-md-3">
+                      <label class="form-label small">To Room</label>
+                      <select name="to_room_id" class="form-select form-select-sm" required>
+                        <% for (const r of allRooms) { %>
+                          <option value="<%= r.id %>" <%= r.id === hs.to_room_id ? 'selected' : '' %>><%= r.name %></option>
+                        <% } %>
+                      </select>
+                    </div>
+                    <div class="col-6 col-md-2">
+                      <label class="form-label small">Pitch</label>
+                      <input type="number" name="pitch" class="form-control form-control-sm"
+                             value="<%= hs.pitch %>" step="0.1" min="-90" max="90">
+                    </div>
+                    <div class="col-6 col-md-2">
+                      <label class="form-label small">Yaw</label>
+                      <input type="number" name="yaw" class="form-control form-control-sm"
+                             value="<%= hs.yaw %>" step="0.1" min="-180" max="180">
+                    </div>
+                    <div class="col-12 col-md-3">
+                      <label class="form-label small">Label</label>
+                      <input type="text" name="text" class="form-control form-control-sm"
+                             value="<%= hs.text %>" placeholder="Optional label">
+                    </div>
+                    <div class="col-12 col-md-2">
+                      <button type="submit" class="btn btn-outline-primary btn-sm w-100"><i class="bi bi-check2"></i> Update</button>
+                    </div>
+                  </form>
+                  <form action="/dashboard/hotspots/<%= hs.id %>?_method=DELETE" method="POST"
+                        onsubmit="return confirm('Delete this hotspot?')">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+                  </form>
                 </div>
-                <form action="/dashboard/hotspots/<%= hs.id %>?_method=DELETE" method="POST"
-                      onsubmit="return confirm('Delete this hotspot?')">
-                  <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                  <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
-                </form>
               </li>
             <% } %>
           </ul>

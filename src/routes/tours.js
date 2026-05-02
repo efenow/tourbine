@@ -2,52 +2,25 @@ const express = require('express');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const db = require('../db');
+const { buildTourData } = require('../tour-data');
 
 router.use(rateLimit({ windowMs: 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false }));
 
-function buildTourData(tourSlug) {
-  const tour = db.prepare('SELECT * FROM tours WHERE slug = ?').get(tourSlug);
-  if (!tour) return null;
-
-  const rooms = db.prepare(`
-    SELECT * FROM rooms WHERE tour_id = ?
-    ORDER BY sort_order ASC, created_at ASC
-  `).all(tour.id);
-
-  const hotspots = db.prepare(`
-    SELECT h.*, r.name AS to_name
-    FROM hotspots h
-    JOIN rooms r ON r.id = h.to_room_id
-    WHERE h.from_room_id IN (SELECT id FROM rooms WHERE tour_id = ?)
-  `).all(tour.id);
-
-  const scenesObj = {};
-  for (const room of rooms) {
-    if (!room.image_path) continue;
-    const roomHotspots = hotspots
-      .filter(h => h.from_room_id === room.id)
-      .map(h => ({
-        pitch: h.pitch,
-        yaw: h.yaw,
-        type: 'scene',
-        text: h.text || h.to_name,
-        sceneId: 'room-' + h.to_room_id
-      }));
-
-    scenesObj['room-' + room.id] = {
-      title: room.name,
-      type: 'equirectangular',
-      panorama: '/' + room.image_path,
-      pitch: room.initial_pitch,
-      yaw: room.initial_yaw,
-      hotSpots: roomHotspots
-    };
+function recordView(req, tourId, roomId, isEmbed) {
+  try {
+    db.prepare(`
+      INSERT INTO tour_views (tour_id, room_id, is_embed, user_agent, referer)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      tourId,
+      roomId || null,
+      isEmbed ? 1 : 0,
+      req.get('user-agent') || '',
+      req.get('referer') || ''
+    );
+  } catch (e) {
+    // Analytics failures should not block the tour view
   }
-
-  const defaultRoom = rooms.find(r => r.is_default && r.image_path) || rooms.find(r => r.image_path);
-  const firstScene = defaultRoom ? 'room-' + defaultRoom.id : null;
-
-  return { tour, rooms, scenesObj, firstScene };
 }
 
 router.get('/:tourSlug', (req, res) => {
@@ -55,6 +28,8 @@ router.get('/:tourSlug', (req, res) => {
   if (!data) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
 
   const { tour, rooms, scenesObj, firstScene } = data;
+  const roomId = firstScene ? parseInt(firstScene.replace('room-', ''), 10) : null;
+  recordView(req, tour.id, roomId, false);
   res.render('tour', {
     title: tour.name,
     tour,
@@ -62,7 +37,7 @@ router.get('/:tourSlug', (req, res) => {
     scenes: JSON.stringify(scenesObj),
     firstScene,
     embedMode: false,
-    isAuthenticated: !!(req.session && req.session.authenticated)
+    isAuthenticated: !!(req.session && req.session.userId)
   });
 });
 
@@ -71,6 +46,8 @@ router.get('/:tourSlug/embed', (req, res) => {
   if (!data) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
 
   const { tour, rooms, scenesObj, firstScene } = data;
+  const roomId = firstScene ? parseInt(firstScene.replace('room-', ''), 10) : null;
+  recordView(req, tour.id, roomId, true);
   res.render('tour', {
     title: tour.name,
     tour,

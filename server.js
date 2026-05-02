@@ -4,6 +4,7 @@ const methodOverride = require('method-override');
 const session = require('express-session');
 const { csrfSync } = require('csrf-sync');
 const db = require('./src/db');
+const { attachUser } = require('./src/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -51,6 +52,9 @@ const { generateToken, csrfSynchronisedProtection } = csrfSync({
 
 app.use(csrfSynchronisedProtection);
 
+// Attach user (if logged in) for templates and downstream handlers
+app.use(attachUser);
+
 // Make CSRF token available in all EJS templates
 app.use((req, res, next) => {
   try { res.locals.csrfToken = generateToken(req); } catch (e) { res.locals.csrfToken = ''; }
@@ -59,6 +63,7 @@ app.use((req, res, next) => {
 
 app.use('/', require('./src/routes/index'));
 app.use('/tour', require('./src/routes/tours'));
+app.use('/api', require('./src/routes/api'));
 app.use('/dashboard', require('./src/routes/dashboard'));
 
 app.use((req, res) => {
@@ -81,6 +86,4 @@ app.listen(PORT, () => {
   console.log(`Tourbine running at http://localhost:${PORT}`);
   console.log(`Dashboard: http://localhost:${PORT}/dashboard`);
 });
-
-
 

@@ -6,6 +6,7 @@ Self-hosted Open Source 360° web tour software with:
 - support for uploading and viewing Google Camera app Photo Spheres
 - an admin dashboard at `/dashboard`
 - full tour views available at room URLs
+- tour cover images, analytics, and role-based dashboard access
 
 ---
 
@@ -24,7 +25,9 @@ npm start
 docker compose up -d
 ```
 
-Open `http://localhost:3000` in your browser. On first visit to `/dashboard`, you will be prompted to create a password.
+Open `http://localhost:3000` in your browser. On first visit to `/dashboard`, you will be prompted to create the first admin account.
+
+After setup, you can add additional users and roles from **Dashboard → Users**.
 
 ---
 
@@ -107,3 +110,29 @@ If you lose access to the dashboard, use the included CLI tool (works while the 
 node reset-password.js
 ```
 
+You'll be prompted to choose which username to reset.
+
+### User Roles
+
+Tourbine supports multiple users with roles:
+
+- **Admin** — full access, including user management
+- **Editor** — create and edit tours, rooms, and hotspots
+- **Viewer** — read-only dashboard access
+
+Manage roles at **Dashboard → Users**.
+
+---
+
+## 📊 Analytics
+
+Tourbine tracks tour visits and shows totals over the last 24 hours and 7 days. View the dashboard analytics at **Dashboard → Analytics**.
+
+---
+
+## 🔌 REST/JSON API
+
+Tourbine exposes a read-only API for headless use:
+
+- `GET /api/tours` — list tours
+- `GET /api/tours/:slug` — tour details, rooms, hotspots, and scene data

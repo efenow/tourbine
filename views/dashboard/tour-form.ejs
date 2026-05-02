@@ -15,13 +15,29 @@
       <% if (error) { %>
         <div class="alert alert-danger"><%= error %></div>
       <% } %>
-      <form method="POST"
+      <form method="POST" enctype="multipart/form-data"
             action="<%= tour ? `/dashboard/tours/${tour.id}?_method=PUT` : '/dashboard/tours' %>">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="mb-3">
           <label for="name" class="form-label">Tour Name <span class="text-danger">*</span></label>
           <input type="text" id="name" name="name" class="form-control" required
                  value="<%= tour ? tour.name : '' %>" placeholder="e.g. Office Virtual Tour">
+        </div>
+        <div class="mb-3">
+          <label for="cover_image" class="form-label">Cover Image</label>
+          <% if (tour && tour.cover_image_path) { %>
+            <div class="mb-2">
+              <img src="/<%= tour.cover_image_path %>" class="img-thumbnail" style="max-height:140px;" alt="Current cover image">
+              <div class="text-muted small mt-1">Current cover — upload a new one to replace it</div>
+            </div>
+            <div class="form-check mb-2">
+              <input type="checkbox" id="remove_cover" name="remove_cover" class="form-check-input">
+              <label for="remove_cover" class="form-check-label">Remove cover image</label>
+            </div>
+          <% } %>
+          <input type="file" id="cover_image" name="cover_image" class="form-control"
+                 accept="image/jpeg,image/png,image/webp">
+          <div class="form-text">JPEG, PNG, or WebP. Max 100 MB.</div>
         </div>
         <div class="mb-3">
           <label for="description" class="form-label">Description</label>

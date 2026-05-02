@@ -4,16 +4,57 @@ Planned features for upcoming releases.
 
 ---
 
+## ✨ Experience Improvements
+
+### ✅ Hotspot editing (update existing hotspots)
+**Status: Completed**
+
+Hotspots can now be updated (destination room, pitch/yaw, and label) directly from the room editor.
+
+### ✅ Tour-level thumbnail / cover image
+**Status: Completed**
+
+Tours now support a dedicated cover image that overrides the default room thumbnail on the public tours list.
+
+---
+
+## 📊 Analytics
+
+### ✅ Visitor stats dashboard
+**Status: Completed**
+
+Tour views are recorded and summarized in a dashboard analytics page (all-time, last 7 days, last 24 hours).
+
+---
+
+## 👥 Multi-User Access
+
+### ✅ Role-based dashboard access
+**Status: Completed**
+
+Multiple users are supported with Admin, Editor, and Viewer roles, plus user management in the dashboard.
+
+---
+
+## 🔌 API
+
+### ✅ REST/JSON API for headless use
+**Status: Completed**
+
+Read-only API endpoints are available at `/api/tours` and `/api/tours/:slug`.
+
+---
+
 ## 🔐 Security
 
-### ✅ Dashboard password protection
+### ✅ Dashboard authentication
 **Status: Completed**
 
 Protect the `/dashboard` from unauthorized access when the instance is exposed to the internet.
 
 **Implemented:**
-- On first run, if no password is set, redirect to a one-time setup screen (`/dashboard/setup`) to create a password
-- Password is hashed with **bcrypt** (cost factor 12) — never stored in plaintext
+- On first run, if no user exists, redirect to a one-time setup screen (`/dashboard/setup`) to create the first admin account
+- Passwords are hashed with **bcrypt** (cost factor 12) — never stored in plaintext
 - Session-based authentication using **express-session** with:
   - A randomly generated secret stored in the database (not in code or env files)
   - `httpOnly: true`, `sameSite: 'strict'`, `secure` flag automatically enabled behind HTTPS proxies
@@ -26,9 +67,9 @@ Protect the `/dashboard` from unauthorized access when the instance is exposed t
 
 **Implemented:**
 - Run with `node reset-password.js`
-- Interactive prompts with hidden input: enter new password → confirm → bcrypt hash → write to DB
+- Interactive prompts with hidden input: select username → enter new password → confirm → bcrypt hash → write to DB
 - Works even when the server is not running (direct SQLite access)
-- Refuses to run if no password has been set yet (use setup flow instead)
+- Refuses to run if no users exist yet (use setup flow first)
 
 ---
 
@@ -155,4 +196,3 @@ Previously, users had to manually type numerical pitch/yaw values to place hotsp
 - All rooms are copied (name, slug, pitch/yaw, default flag, sort order) — images are **not** copied (user re-uploads); image_path is set to NULL so room cards clearly show "No image"
 - All hotspots that link two rooms within the same tour are duplicated with mapped room IDs
 - After duplication, the browser is redirected to the new tour's rooms page
-

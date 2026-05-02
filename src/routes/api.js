@@ -1,11 +1,13 @@
 const express = require('express');
-const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const db = require('../db');
+const { buildTourData } = require('../tour-data');
+
+const router = express.Router();
 
 router.use(rateLimit({ windowMs: 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false }));
 
-router.get('/', (req, res) => {
+router.get('/tours', (req, res) => {
   const tours = db.prepare(`
     SELECT t.*,
       COUNT(r.id) AS room_count,
@@ -20,7 +22,21 @@ router.get('/', (req, res) => {
     ORDER BY t.created_at DESC
   `).all();
 
-  res.render('index', { title: 'Tours', tours });
+  res.json({ tours });
+});
+
+router.get('/tours/:slug', (req, res) => {
+  const data = buildTourData(req.params.slug);
+  if (!data) return res.status(404).json({ error: 'Tour not found' });
+
+  const { tour, rooms, hotspots, scenesObj, firstScene } = data;
+  res.json({
+    tour,
+    rooms,
+    hotspots,
+    scenes: scenesObj,
+    firstScene
+  });
 });
 
 module.exports = router;

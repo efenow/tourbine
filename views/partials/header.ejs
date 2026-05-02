@@ -13,15 +13,24 @@
 <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
   <div class="container">
     <a class="navbar-brand fw-bold" href="/"><i class="bi bi-globe"></i> Tourbine</a>
-    <div class="navbar-nav ms-auto">
+    <div class="navbar-nav ms-auto align-items-center">
       <a class="nav-link" href="/">Tours</a>
       <a class="nav-link" href="/dashboard"><i class="bi bi-grid"></i> Dashboard</a>
-      <form action="/dashboard/logout" method="POST" class="d-inline ms-2">
-        <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
-        <button type="submit" class="btn btn-outline-light btn-sm">
-          <i class="bi bi-box-arrow-right"></i> Logout
-        </button>
-      </form>
+      <% if (currentUser) { %>
+        <span class="navbar-text text-light small me-2">
+          <i class="bi bi-person-circle"></i> <%= currentUser.username %> (<%= currentUser.role %>)
+        </span>
+        <form action="/dashboard/logout" method="POST" class="d-inline">
+          <input type="hidden" name="_csrf" value="<%= typeof csrfToken !== 'undefined' ? csrfToken : '' %>">
+          <button type="submit" class="btn btn-outline-light btn-sm">
+            <i class="bi bi-box-arrow-right"></i> Logout
+          </button>
+        </form>
+      <% } else { %>
+        <a class="btn btn-outline-light btn-sm ms-2" href="/dashboard/login">
+          <i class="bi bi-box-arrow-in-right"></i> Login
+        </a>
+      <% } %>
     </div>
   </div>
 </nav>

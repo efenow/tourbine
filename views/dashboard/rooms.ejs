@@ -8,6 +8,7 @@
     </ol>
   </nav>
 
+  <% const canEdit = currentUser && currentUser.role !== 'viewer'; %>
   <div class="d-flex justify-content-between align-items-center mb-4">
     <h2 class="h4 mb-0">Rooms — <%= tour.name %></h2>
     <div class="d-flex gap-2">
@@ -15,7 +16,9 @@
       <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#embedModal">
         <i class="bi bi-code-slash"></i> Embed Code
       </button>
-      <a href="/dashboard/tours/<%= tour.id %>/rooms/new" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add Room</a>
+      <% if (canEdit) { %>
+        <a href="/dashboard/tours/<%= tour.id %>/rooms/new" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg"></i> Add Room</a>
+      <% } %>
     </div>
   </div>
 
@@ -57,28 +60,33 @@
               <th>Name</th>
               <th>Default</th>
               <th>Image</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
             <% for (let i = 0; i < rooms.length; i++) { const room = rooms[i]; %>
               <tr>
                 <td style="width:70px;">
                   <div class="d-flex flex-column gap-1">
-                    <% if (i > 0) { %>
-                      <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/move-up" method="POST" class="d-inline">
-                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                        <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1" title="Move up"><i class="bi bi-chevron-up"></i></button>
-                      </form>
+                    <% if (canEdit) { %>
+                      <% if (i > 0) { %>
+                        <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/move-up" method="POST" class="d-inline">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                          <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1" title="Move up"><i class="bi bi-chevron-up"></i></button>
+                        </form>
+                      <% } else { %>
+                        <button class="btn btn-outline-secondary btn-sm py-0 px-1 invisible" disabled><i class="bi bi-chevron-up"></i></button>
+                      <% } %>
+                      <% if (i < rooms.length - 1) { %>
+                        <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/move-down" method="POST" class="d-inline">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                          <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1" title="Move down"><i class="bi bi-chevron-down"></i></button>
+                        </form>
+                      <% } else { %>
+                        <button class="btn btn-outline-secondary btn-sm py-0 px-1 invisible" disabled><i class="bi bi-chevron-down"></i></button>
+                      <% } %>
                     <% } else { %>
                       <button class="btn btn-outline-secondary btn-sm py-0 px-1 invisible" disabled><i class="bi bi-chevron-up"></i></button>
-                    <% } %>
-                    <% if (i < rooms.length - 1) { %>
-                      <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/move-down" method="POST" class="d-inline">
-                        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                        <button type="submit" class="btn btn-outline-secondary btn-sm py-0 px-1" title="Move down"><i class="bi bi-chevron-down"></i></button>
-                      </form>
-                    <% } else { %>
                       <button class="btn btn-outline-secondary btn-sm py-0 px-1 invisible" disabled><i class="bi bi-chevron-down"></i></button>
                     <% } %>
                   </div>
@@ -107,18 +115,22 @@
                 </td>
                 <td>
                   <div class="d-flex gap-1 flex-wrap">
-                    <a href="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/edit" class="btn btn-outline-secondary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
-                    <% if (!room.is_default) { %>
-                      <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/set-default" method="POST" class="d-inline">
+                    <% if (canEdit) { %>
+                      <a href="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/edit" class="btn btn-outline-secondary btn-sm"><i class="bi bi-pencil"></i> Edit</a>
+                      <% if (!room.is_default) { %>
+                        <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/set-default" method="POST" class="d-inline">
+                          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                          <button type="submit" class="btn btn-outline-warning btn-sm"><i class="bi bi-star"></i> Set Default</button>
+                        </form>
+                      <% } %>
+                      <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>?_method=DELETE" method="POST" class="d-inline"
+                            onsubmit="return confirm('Delete room &quot;<%= room.name %>&quot;?')">
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                        <button type="submit" class="btn btn-outline-warning btn-sm"><i class="bi bi-star"></i> Set Default</button>
+                        <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
                       </form>
+                    <% } else { %>
+                      <span class="text-muted small">Read-only</span>
                     <% } %>
-                    <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>?_method=DELETE" method="POST" class="d-inline"
-                          onsubmit="return confirm('Delete room &quot;<%= room.name %>&quot;?')">
-                      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
-                      <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
-                    </form>
                   </div>
                 </td>
               </tr>

@@ -7,7 +7,7 @@
  * Run with:  node reset-password.js
  *
  * Works even when the server is not running (accesses SQLite directly).
- * Requires that a password has already been set via the /dashboard/setup page.
+ * Requires that an admin user has already been created via /dashboard/setup.
  */
 
 const path = require('path');
@@ -77,17 +77,28 @@ async function main() {
     process.exit(1);
   }
 
-  // Check that a password has already been set
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'password_hash'").get();
-  if (!row || !row.value) {
-    console.error('No password has been set yet. Use the /dashboard/setup page to create one first.');
+  const users = db.prepare('SELECT id, username, role FROM users ORDER BY created_at ASC').all();
+  if (!users || users.length === 0) {
+    console.error('No users exist yet. Use the /dashboard/setup page to create the first admin account.');
     db.close();
     process.exit(1);
   }
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
 
-  const newPassword = await prompt(rl, 'Enter new password: ', true);
+  const defaultUser = users.find(u => u.role === 'admin') || users[0];
+  console.log('Available users: ' + users.map(u => u.username + (u.role === 'admin' ? ' (admin)' : '')).join(', '));
+  const usernameInput = await prompt(rl, `Username [${defaultUser.username}]: `);
+  const targetUsername = (usernameInput || '').trim() || defaultUser.username;
+  const targetUser = db.prepare('SELECT id, username FROM users WHERE username = ?').get(targetUsername);
+  if (!targetUser) {
+    console.error(`User "${targetUsername}" not found.`);
+    db.close();
+    rl.close();
+    process.exit(1);
+  }
+
+  const newPassword = await prompt(rl, `Enter new password for ${targetUser.username}: `, true);
   if (!newPassword || newPassword.length < 8) {
     console.error('\n✖ Password must be at least 8 characters.');
     db.close();
@@ -106,7 +117,7 @@ async function main() {
 
   console.log('\nHashing password…');
   const hash = bcrypt.hashSync(newPassword, 12);
-  db.prepare("UPDATE settings SET value = ? WHERE key = 'password_hash'").run(hash);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, targetUser.id);
   db.close();
 
   console.log('\n✔ Password updated successfully. You can now log in at /dashboard/login.\n');
