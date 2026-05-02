@@ -77,7 +77,14 @@ async function main() {
     process.exit(1);
   }
 
-  const users = db.prepare('SELECT id, username, role FROM users ORDER BY created_at ASC').all();
+  let users;
+  try {
+    users = db.prepare('SELECT id, username, role FROM users ORDER BY created_at ASC').all();
+  } catch (e) {
+    console.error('User table not found. Start Tourbine once to initialize the database.');
+    db.close();
+    process.exit(1);
+  }
   if (!users || users.length === 0) {
     console.error('No users exist yet. Use the /dashboard/setup page to create the first admin account.');
     db.close();
