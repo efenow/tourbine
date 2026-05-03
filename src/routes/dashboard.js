@@ -1,0 +1,658 @@
+const express = require('express');
+const router = express.Router();
+const path = require('path');
+const fs = require('fs');
+const bcrypt = require('bcrypt');
+const rateLimit = require('express-rate-limit');
+const db = require('../db');
+const upload = require('../upload');
+const slugify = require('slugify');
+const { isUserSetup, requireAuth, requireRole } = require('../auth');
+
+const BCRYPT_ROUNDS = 12;
+const ROLE_SYSTEM_ADMIN = 'system_admin';
+const ROLE_ADMIN = 'admin';
+const ROLE_USER = 'user';
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: 'Too many login attempts. Please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+});
+
+// General rate limiter applied to the entire dashboard to reduce abuse risk
+const dashboardLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply dashboard limiter to all /dashboard routes
+router.use(dashboardLimiter);
+
+function makeSlug(text) {
+  return slugify(text, { lower: true, strict: true, trim: true });
+}
+
+function uniqueTourSlug(name, excludeId = null) {
+  let base = makeSlug(name);
+  let slug = base;
+  let i = 1;
+  while (true) {
+    const existing = db.prepare('SELECT id FROM tours WHERE slug = ?').get(slug);
+    if (!existing || existing.id === excludeId) break;
+    slug = `${base}-${i++}`;
+  }
+  return slug;
+}
+
+function uniqueRoomSlug(tourId, name, excludeId = null) {
+  let base = makeSlug(name);
+  let slug = base;
+  let i = 1;
+  while (true) {
+    const existing = db.prepare('SELECT id FROM rooms WHERE tour_id = ? AND slug = ?').get(tourId, slug);
+    if (!existing || existing.id === excludeId) break;
+    slug = `${base}-${i++}`;
+  }
+  return slug;
+}
+
+function unlinkFile(imagePath) {
+  if (!imagePath) return;
+  try {
+    // dashboard.js lives in src/routes/ — go up two levels to reach public/
+    const uploadsDir = path.resolve(path.join(__dirname, '..', '..', 'public', 'uploads'));
+    // Use path.basename to prevent any directory traversal — stored paths are
+    // always relative like "uploads/filename.ext", so basename gives "filename.ext"
+    const filename = path.basename(imagePath);
+    if (!filename || filename === '.' || filename === '..') return;
+    const resolved = path.join(uploadsDir, filename);
+    fs.unlinkSync(resolved);
+  } catch (e) { /* file may not exist */ }
+}
+
+// GET /dashboard/setup
+router.get('/setup', (req, res) => {
+  if (isUserSetup()) return res.redirect('/dashboard/login');
+  res.render('dashboard/setup', { title: 'Create Admin Account', error: null });
+});
+
+// POST /dashboard/setup
+router.post('/setup', (req, res) => {
+  if (isUserSetup()) return res.redirect('/dashboard');
+  const { username, password, confirm } = req.body;
+  const cleanUsername = (username || '').trim();
+  if (!cleanUsername || cleanUsername.length < 3) {
+    return res.render('dashboard/setup', { title: 'Create Admin Account', error: 'Username must be at least 3 characters.' });
+  }
+  if (!password || password.length < 8) {
+    return res.render('dashboard/setup', { title: 'Create Admin Account', error: 'Password must be at least 8 characters.' });
+  }
+  if (password !== confirm) {
+    return res.render('dashboard/setup', { title: 'Create Admin Account', error: 'Passwords do not match.' });
+  }
+  const hash = bcrypt.hashSync(password, BCRYPT_ROUNDS);
+  const result = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(
+    cleanUsername,
+    hash,
+    ROLE_SYSTEM_ADMIN
+  );
+  req.session.userId = result.lastInsertRowid;
+  req.session.save(() => res.redirect('/dashboard'));
+});
+
+// GET /dashboard/login
+router.get('/login', (req, res) => {
+  if (!isUserSetup()) return res.redirect('/dashboard/setup');
+  if (req.session && req.session.userId) return res.redirect('/dashboard');
+  res.render('dashboard/login', { title: 'Login', error: null });
+});
+
+// POST /dashboard/login
+router.post('/login', loginLimiter, (req, res) => {
+  if (!isUserSetup()) return res.redirect('/dashboard/setup');
+  const { username, password } = req.body;
+  const cleanUsername = (username || '').trim();
+  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(cleanUsername);
+  if (!user || !bcrypt.compareSync(password || '', user.password_hash)) {
+    return res.render('dashboard/login', { title: 'Login', error: 'Incorrect username or password.' });
+  }
+  const returnTo = req.session.returnTo || '/dashboard';
+  req.session.regenerate((err) => {
+    if (err) return res.render('dashboard/login', { title: 'Login', error: 'Session error. Please try again.' });
+    req.session.userId = user.id;
+    req.session.save(() => res.redirect(returnTo));
+  });
+});
+
+// POST /dashboard/logout
+router.post('/logout', (req, res) => {
+  req.session.destroy(() => res.redirect('/dashboard/login'));
+});
+
+// All routes below require authentication
+router.use(requireAuth);
+
+const requireEditor = requireRole([ROLE_SYSTEM_ADMIN, ROLE_ADMIN]);
+const requireAdmin = requireRole([ROLE_SYSTEM_ADMIN, ROLE_ADMIN]);
+
+const VALID_ROLES = [ROLE_SYSTEM_ADMIN, ROLE_ADMIN, ROLE_USER];
+
+function canGrantAdmin(user) {
+  return user && user.role === ROLE_SYSTEM_ADMIN;
+}
+
+function renderUsersPage(res, error = null, formData = {}) {
+  const users = db.prepare('SELECT id, username, role, created_at FROM users ORDER BY created_at ASC').all();
+  res.render('dashboard/users', { title: 'Users', users, error, formData });
+}
+
+// GET /dashboard
+router.get('/', (req, res) => {
+  const tours = db.prepare(`
+    SELECT t.*, COUNT(r.id) AS room_count
+    FROM tours t
+    LEFT JOIN rooms r ON r.tour_id = t.id
+    GROUP BY t.id
+    ORDER BY t.created_at DESC
+  `).all();
+  const totalRooms = db.prepare('SELECT COUNT(*) AS cnt FROM rooms').get().cnt;
+  const totalViews = db.prepare('SELECT COUNT(*) AS cnt FROM tour_views').get().cnt;
+  const totalUsers = db.prepare('SELECT COUNT(*) AS cnt FROM users').get().cnt;
+  res.render('dashboard/index', { title: 'Dashboard', tours, totalRooms, totalViews, totalUsers });
+});
+
+// GET /dashboard/analytics
+router.get('/analytics', (req, res) => {
+  const totalViews = db.prepare('SELECT COUNT(*) AS cnt FROM tour_views').get().cnt;
+  const views7d = db.prepare("SELECT COUNT(*) AS cnt FROM tour_views WHERE viewed_at >= datetime('now', '-7 days')").get().cnt;
+  const views24h = db.prepare("SELECT COUNT(*) AS cnt FROM tour_views WHERE viewed_at >= datetime('now', '-1 day')").get().cnt;
+  const tours = db.prepare(`
+    SELECT t.*,
+      COUNT(v.id) AS views_total,
+      SUM(CASE WHEN v.viewed_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS views_7d,
+      SUM(CASE WHEN v.viewed_at >= datetime('now', '-1 day') THEN 1 ELSE 0 END) AS views_24h
+    FROM tours t
+    LEFT JOIN tour_views v ON v.tour_id = t.id
+    GROUP BY t.id
+    ORDER BY views_total DESC, t.created_at DESC
+  `).all();
+  res.render('dashboard/analytics', {
+    title: 'Analytics',
+    totalViews,
+    views7d,
+    views24h,
+    tours
+  });
+});
+
+// GET /dashboard/users
+router.get('/users', requireAdmin, (req, res) => {
+  renderUsersPage(res);
+});
+
+// POST /dashboard/users
+router.post('/users', requireAdmin, (req, res) => {
+  const { username, password, confirm, role } = req.body;
+  const cleanUsername = (username || '').trim();
+  const selectedRole = role || ROLE_USER;
+
+  if (!cleanUsername || cleanUsername.length < 3) {
+    return renderUsersPage(res, 'Username must be at least 3 characters.', { username: cleanUsername, role: selectedRole });
+  }
+  if (!VALID_ROLES.includes(selectedRole) || selectedRole === ROLE_SYSTEM_ADMIN) {
+    return renderUsersPage(res, 'Invalid role selected.', { username: cleanUsername, role: selectedRole });
+  }
+  if (selectedRole === ROLE_ADMIN && !canGrantAdmin(req.user)) {
+    return renderUsersPage(res, 'Only the system admin can assign the admin role.', { username: cleanUsername, role: ROLE_USER });
+  }
+  if (!password || password.length < 8) {
+    return renderUsersPage(res, 'Password must be at least 8 characters.', { username: cleanUsername, role: selectedRole });
+  }
+  if (password !== confirm) {
+    return renderUsersPage(res, 'Passwords do not match.', { username: cleanUsername, role: selectedRole });
+  }
+
+  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(cleanUsername);
+  if (existing) {
+    return renderUsersPage(res, 'Username is already in use.', { username: cleanUsername, role: selectedRole });
+  }
+
+  const hash = bcrypt.hashSync(password, BCRYPT_ROUNDS);
+  db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(cleanUsername, hash, selectedRole);
+  res.redirect('/dashboard/users');
+});
+
+// POST /dashboard/users/:id/role
+router.post('/users/:id/role', requireAdmin, (req, res) => {
+  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'User not found' });
+  const newRole = req.body.role;
+  if (!VALID_ROLES.includes(newRole) || newRole === ROLE_SYSTEM_ADMIN) {
+    return renderUsersPage(res, 'Invalid role selected.');
+  }
+  if (user.role === ROLE_SYSTEM_ADMIN) {
+    return renderUsersPage(res, 'The system admin role cannot be changed.');
+  }
+  if (newRole === ROLE_ADMIN && !canGrantAdmin(req.user)) {
+    return renderUsersPage(res, 'Only the system admin can promote users to admin.');
+  }
+  db.prepare('UPDATE users SET role = ? WHERE id = ?').run(newRole, user.id);
+  res.redirect('/dashboard/users');
+});
+
+// POST /dashboard/users/:id/password
+router.post('/users/:id/password', requireAdmin, (req, res) => {
+  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'User not found' });
+  if (user.role === ROLE_SYSTEM_ADMIN && !canGrantAdmin(req.user)) {
+    return renderUsersPage(res, 'Only the system admin can reset the system admin password.');
+  }
+  const { password, confirm } = req.body;
+  if (!password || password.length < 8) {
+    return renderUsersPage(res, 'Password must be at least 8 characters.');
+  }
+  if (password !== confirm) {
+    return renderUsersPage(res, 'Passwords do not match.');
+  }
+  const hash = bcrypt.hashSync(password, BCRYPT_ROUNDS);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+  res.redirect('/dashboard/users');
+});
+
+// DELETE /dashboard/users/:id
+router.delete('/users/:id', requireAdmin, (req, res) => {
+  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'User not found' });
+  if (req.user && req.user.id === user.id) {
+    return renderUsersPage(res, 'You cannot delete your own account while logged in.');
+  }
+  if (user.role === ROLE_SYSTEM_ADMIN) {
+    return renderUsersPage(res, 'The system admin account cannot be deleted.');
+  }
+  db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+  res.redirect('/dashboard/users');
+});
+
+// GET /dashboard/tours/new
+router.get('/tours/new', requireEditor, (req, res) => {
+  res.render('dashboard/tour-form', { title: 'New Tour', tour: null, error: null });
+});
+
+// POST /dashboard/tours
+router.post('/tours', requireEditor, (req, res) => {
+  upload.single('cover_image')(req, res, (err) => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Cover image is too large. Maximum size is 100 MB.'
+        : (err.message || 'File upload failed.');
+      return res.render('dashboard/tour-form', { title: 'New Tour', tour: null, error: msg });
+    }
+
+    const { name, description } = req.body;
+    if (!name || !name.trim()) {
+      if (req.file) unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/tour-form', { title: 'New Tour', tour: null, error: 'Name is required' });
+    }
+    const slug = uniqueTourSlug(name.trim());
+    const cover_image_path = req.file ? 'uploads/' + req.file.filename : null;
+    db.prepare('INSERT INTO tours (name, slug, description, cover_image_path) VALUES (?, ?, ?, ?)').run(
+      name.trim(),
+      slug,
+      description || '',
+      cover_image_path
+    );
+    res.redirect('/dashboard');
+  });
+});
+
+// GET /dashboard/tours/:id/edit
+router.get('/tours/:id/edit', requireEditor, (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  res.render('dashboard/tour-form', { title: 'Edit Tour', tour, error: null });
+});
+
+// PUT /dashboard/tours/:id
+router.put('/tours/:id', requireEditor, (req, res) => {
+  upload.single('cover_image')(req, res, (err) => {
+    const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
+    if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Cover image is too large. Maximum size is 100 MB.'
+        : (err.message || 'File upload failed.');
+      return res.render('dashboard/tour-form', { title: 'Edit Tour', tour, error: msg });
+    }
+
+    const { name, description, remove_cover } = req.body;
+    if (!name || !name.trim()) {
+      if (req.file) unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/tour-form', { title: 'Edit Tour', tour, error: 'Name is required' });
+    }
+    const slug = uniqueTourSlug(name.trim(), tour.id);
+    let cover_image_path = tour.cover_image_path;
+    if (remove_cover === 'on' && cover_image_path) {
+      unlinkFile(cover_image_path);
+      cover_image_path = null;
+    }
+    if (req.file) {
+      if (cover_image_path) unlinkFile(cover_image_path);
+      cover_image_path = 'uploads/' + req.file.filename;
+    }
+    db.prepare('UPDATE tours SET name = ?, slug = ?, description = ?, cover_image_path = ? WHERE id = ?').run(
+      name.trim(),
+      slug,
+      description || '',
+      cover_image_path,
+      tour.id
+    );
+    res.redirect('/dashboard');
+  });
+});
+
+// POST /dashboard/tours/:id/duplicate
+router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
+  const original = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
+  if (!original) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+
+  const newSlug = uniqueTourSlug('Copy of ' + original.name);
+  const insertTour = db.prepare('INSERT INTO tours (name, slug, description, cover_image_path) VALUES (?, ?, ?, NULL)');
+  const newTourId = insertTour.run('Copy of ' + original.name, newSlug, original.description || '').lastInsertRowid;
+
+  // Duplicate rooms (without image files — images must be re-uploaded)
+  const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? ORDER BY sort_order ASC, created_at ASC').all(original.id);
+  const roomIdMap = {}; // original room id → new room id
+
+  for (const room of rooms) {
+    const newRoomSlug = uniqueRoomSlug(newTourId, room.name);
+    const result = db.prepare(
+      'INSERT INTO rooms (tour_id, name, slug, image_path, initial_pitch, initial_yaw, is_default, sort_order) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)'
+    ).run(newTourId, room.name, newRoomSlug, room.initial_pitch, room.initial_yaw, room.is_default, room.sort_order);
+    roomIdMap[room.id] = result.lastInsertRowid;
+  }
+
+  // Duplicate hotspots (only those where both from and to rooms are in the duplicated set)
+  const hotspots = db.prepare('SELECT * FROM hotspots WHERE from_room_id IN (SELECT id FROM rooms WHERE tour_id = ?)').all(original.id);
+  for (const hs of hotspots) {
+    const newFromId = roomIdMap[hs.from_room_id];
+    const newToId = roomIdMap[hs.to_room_id];
+    if (newFromId && newToId) {
+      db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text) VALUES (?, ?, ?, ?, ?)').run(
+        newFromId, newToId, hs.pitch, hs.yaw, hs.text
+      );
+    }
+  }
+
+  res.redirect(`/dashboard/tours/${newTourId}/rooms`);
+});
+
+// DELETE /dashboard/tours/:id
+router.delete('/tours/:id', requireEditor, (req, res) => {
+  const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ?').all(req.params.id);
+  for (const room of rooms) unlinkFile(room.image_path);
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
+  if (tour && tour.cover_image_path) unlinkFile(tour.cover_image_path);
+  db.prepare('DELETE FROM tours WHERE id = ?').run(req.params.id);
+  res.redirect('/dashboard');
+});
+
+// GET /dashboard/tours/:tourId/rooms
+router.get('/tours/:tourId/rooms', (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? ORDER BY sort_order ASC, created_at ASC').all(tour.id);
+  res.render('dashboard/rooms', { title: `Rooms — ${tour.name}`, tour, rooms });
+});
+
+// GET /dashboard/tours/:tourId/rooms/new
+router.get('/tours/:tourId/rooms/new', requireEditor, (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: null });
+});
+
+// POST /dashboard/tours/:tourId/rooms
+router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
+  upload.single('image')(req, res, (err) => {
+    const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+    if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Image is too large. Maximum size is 100 MB.'
+        : (err.message || 'File upload failed.');
+      return res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: msg });
+    }
+
+    const { name, initial_pitch, initial_yaw, is_default } = req.body;
+    if (!name || !name.trim()) {
+      if (req.file) unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: 'Room name is required' });
+    }
+
+    const slug = uniqueRoomSlug(tour.id, name.trim());
+    const image_path = req.file ? 'uploads/' + req.file.filename : null;
+
+    const existingRooms = db.prepare('SELECT COUNT(*) AS cnt FROM rooms WHERE tour_id = ?').get(tour.id).cnt;
+    const setDefault = is_default === 'on' || existingRooms === 0;
+
+    if (setDefault) {
+      db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
+    }
+
+    const maxOrder = db.prepare('SELECT MAX(sort_order) AS m FROM rooms WHERE tour_id = ?').get(tour.id).m || 0;
+
+    db.prepare('INSERT INTO rooms (tour_id, name, slug, image_path, initial_pitch, initial_yaw, is_default, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
+      tour.id, name.trim(), slug, image_path,
+      parseFloat(initial_pitch) || 0,
+      parseFloat(initial_yaw) || 0,
+      setDefault ? 1 : 0,
+      maxOrder + 1
+    );
+
+    res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+  });
+});
+
+// GET /dashboard/tours/:tourId/rooms/:roomId/edit
+router.get('/tours/:tourId/rooms/:roomId/edit', requireEditor, (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  const allRooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? AND id != ? ORDER BY name ASC').all(tour.id, room.id);
+  const hotspots = db.prepare(`
+    SELECT h.*, r.name AS to_name
+    FROM hotspots h
+    JOIN rooms r ON r.id = h.to_room_id
+    WHERE h.from_room_id = ?
+  `).all(room.id);
+
+  res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: null });
+});
+
+// PUT /dashboard/tours/:tourId/rooms/:roomId
+router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
+  upload.single('image')(req, res, (err) => {
+    const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+    if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+    const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+    if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+    const allRooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? AND id != ? ORDER BY name ASC').all(tour.id, room.id);
+    const hotspots = db.prepare('SELECT h.*, r.name AS to_name FROM hotspots h JOIN rooms r ON r.id = h.to_room_id WHERE h.from_room_id = ?').all(room.id);
+
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'Image is too large. Maximum size is 100 MB.'
+        : (err.message || 'File upload failed.');
+      return res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: msg });
+    }
+
+    const { name, initial_pitch, initial_yaw, is_default } = req.body;
+    if (!name || !name.trim()) {
+      if (req.file) unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: 'Room name is required' });
+    }
+
+    const slug = uniqueRoomSlug(tour.id, name.trim(), room.id);
+    let image_path = room.image_path;
+
+    if (req.file) {
+      unlinkFile(room.image_path);
+      image_path = 'uploads/' + req.file.filename;
+    }
+
+    const setDefault = is_default === 'on';
+    if (setDefault) {
+      db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
+    }
+
+    db.prepare('UPDATE rooms SET name = ?, slug = ?, image_path = ?, initial_pitch = ?, initial_yaw = ?, is_default = ? WHERE id = ?').run(
+      name.trim(), slug, image_path,
+      parseFloat(initial_pitch) || 0,
+      parseFloat(initial_yaw) || 0,
+      setDefault ? 1 : (room.is_default || 0),
+      room.id
+    );
+
+    res.redirect(`/dashboard/tours/${tour.id}/rooms/${room.id}/edit`);
+  });
+});
+
+// DELETE /dashboard/tours/:tourId/rooms/:roomId
+router.delete('/tours/:tourId/rooms/:roomId', requireEditor, (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  unlinkFile(room.image_path);
+  db.prepare('DELETE FROM rooms WHERE id = ?').run(room.id);
+
+  if (room.is_default) {
+    const next = db.prepare('SELECT id FROM rooms WHERE tour_id = ? ORDER BY sort_order ASC, created_at ASC LIMIT 1').get(tour.id);
+    if (next) db.prepare('UPDATE rooms SET is_default = 1 WHERE id = ?').run(next.id);
+  }
+
+  res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+});
+
+// POST /dashboard/tours/:tourId/rooms/:roomId/set-default
+router.post('/tours/:tourId/rooms/:roomId/set-default', requireEditor, (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
+  db.prepare('UPDATE rooms SET is_default = 1 WHERE id = ?').run(room.id);
+
+  res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+});
+
+// POST /dashboard/tours/:tourId/rooms/:roomId/hotspots
+router.post('/tours/:tourId/rooms/:roomId/hotspots', requireEditor, (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  const { to_room_id, pitch, yaw, text } = req.body;
+
+  const toRoom = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(to_room_id, tour.id);
+  if (!toRoom) return res.status(400).render('error', { title: 'Error', status: 400, message: 'Invalid target room' });
+  if (toRoom.id === room.id) return res.status(400).render('error', { title: 'Error', status: 400, message: 'A hotspot cannot link a room to itself' });
+
+  db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text) VALUES (?, ?, ?, ?, ?)').run(
+    room.id, toRoom.id, parseFloat(pitch) || 0, parseFloat(yaw) || 0, text || ''
+  );
+
+  res.redirect(`/dashboard/tours/${tour.id}/rooms/${room.id}/edit`);
+});
+
+// POST /dashboard/tours/:tourId/rooms/:roomId/move-up
+router.post('/tours/:tourId/rooms/:roomId/move-up', requireEditor, (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? ORDER BY sort_order ASC, created_at ASC').all(tour.id);
+  const idx = rooms.findIndex(r => r.id === room.id);
+  if (idx > 0) {
+    const prev = rooms[idx - 1];
+    db.prepare('UPDATE rooms SET sort_order = ? WHERE id = ?').run(prev.sort_order, room.id);
+    db.prepare('UPDATE rooms SET sort_order = ? WHERE id = ?').run(room.sort_order, prev.id);
+  }
+  res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+});
+
+// POST /dashboard/tours/:tourId/rooms/:roomId/move-down
+router.post('/tours/:tourId/rooms/:roomId/move-down', requireEditor, (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? ORDER BY sort_order ASC, created_at ASC').all(tour.id);
+  const idx = rooms.findIndex(r => r.id === room.id);
+  if (idx < rooms.length - 1) {
+    const next = rooms[idx + 1];
+    db.prepare('UPDATE rooms SET sort_order = ? WHERE id = ?').run(next.sort_order, room.id);
+    db.prepare('UPDATE rooms SET sort_order = ? WHERE id = ?').run(room.sort_order, next.id);
+  }
+  res.redirect(`/dashboard/tours/${tour.id}/rooms`);
+});
+
+// PUT /dashboard/hotspots/:id
+router.put('/hotspots/:id', requireEditor, (req, res) => {
+  const hotspot = db.prepare(`
+    SELECT h.*, r.tour_id, r.id AS room_id
+    FROM hotspots h
+    JOIN rooms r ON r.id = h.from_room_id
+    WHERE h.id = ?
+  `).get(req.params.id);
+
+  if (!hotspot) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Hotspot not found' });
+
+  const { to_room_id, pitch, yaw, text } = req.body;
+  const toRoom = db.prepare('SELECT id FROM rooms WHERE id = ? AND tour_id = ?').get(to_room_id, hotspot.tour_id);
+  if (!toRoom || toRoom.id === hotspot.room_id) {
+    return res.status(400).render('error', { title: 'Error', status: 400, message: 'Invalid target room' });
+  }
+
+  db.prepare('UPDATE hotspots SET to_room_id = ?, pitch = ?, yaw = ?, text = ? WHERE id = ?').run(
+    toRoom.id,
+    parseFloat(pitch) || 0,
+    parseFloat(yaw) || 0,
+    text || '',
+    hotspot.id
+  );
+
+  res.redirect(`/dashboard/tours/${hotspot.tour_id}/rooms/${hotspot.room_id}/edit`);
+});
+
+// DELETE /dashboard/hotspots/:id
+router.delete('/hotspots/:id', requireEditor, (req, res) => {
+  const hotspot = db.prepare(`
+    SELECT h.*, r.tour_id, r.id AS room_id
+    FROM hotspots h
+    JOIN rooms r ON r.id = h.from_room_id
+    WHERE h.id = ?
+  `).get(req.params.id);
+
+  if (!hotspot) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Hotspot not found' });
+
+  db.prepare('DELETE FROM hotspots WHERE id = ?').run(hotspot.id);
+  res.redirect(`/dashboard/tours/${hotspot.tour_id}/rooms/${hotspot.room_id}/edit`);
+});
+
+module.exports = router;

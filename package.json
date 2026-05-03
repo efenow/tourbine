@@ -1,0 +1,29 @@
+{
+  "name": "tourbine",
+  "version": "1.0.0",
+  "description": "Self-hosted Open Source 360° Web Tour Software",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "npx nodemon server.js",
+    "test": "jest --runInBand --forceExit"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^9.4.3",
+    "bootstrap": "^5.3.8",
+    "bootstrap-icons": "^1.13.1",
+    "csrf-sync": "^4.2.1",
+    "ejs": "^3.1.9",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.4.0",
+    "express-session": "^1.19.0",
+    "method-override": "^3.0.0",
+    "multer": "^2.1.1",
+    "slugify": "^1.6.6"
+  },
+  "devDependencies": {
+    "jest": "^30.3.0",
+    "supertest": "^7.2.2"
+  }
+}

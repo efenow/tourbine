@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= tour.name %> — Tourbine</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif; }
+
+    /* ── Viewer ─────────────────────────────────────── */
+    #panorama { position: absolute; inset: 0; }
+
+    /* ── Top-left info bar ──────────────────────────── */
+    #top-bar {
+      position: fixed; top: 1rem; left: 1rem; z-index: 300;
+      display: flex; align-items: center; gap: 0.55rem;
+    }
+    #back-btn {
+      width: 44px; height: 44px; flex-shrink: 0;
+      background: rgba(25,25,25,0.82); backdrop-filter: blur(12px);
+      border: none; border-radius: 50%; color: #fff; font-size: 1.1rem;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; text-decoration: none;
+      transition: background 0.2s;
+    }
+    #back-btn:hover { background: rgba(55,55,55,0.92); color: #fff; }
+    #tour-info-pill {
+      background: rgba(25,25,25,0.82); backdrop-filter: blur(12px);
+      border-radius: 24px; padding: 0.4rem 1rem 0.45rem;
+      color: #fff; max-width: 320px;
+    }
+    #tour-info-pill .presenter { font-size: 0.68rem; color: rgba(255,255,255,0.5); line-height: 1.2; }
+    #tour-info-pill .tour-name {
+      font-size: 0.9rem; font-weight: 600; line-height: 1.3;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      display: flex; align-items: center; gap: 0.3rem;
+    }
+    #tour-info-pill .tour-name i { font-size: 0.75rem; color: rgba(255,255,255,0.6); flex-shrink: 0; }
+
+    /* ── Bottom UI wrapper ──────────────────────────── */
+    #bottom-ui {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 300;
+      transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
+    }
+    #bottom-ui.strip-hidden { transform: translateY(calc(100% - 52px)); }
+
+    /* ── Toolbar ────────────────────────────────────── */
+    #toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.4rem 1rem;
+      background: rgba(18,18,18,0.88); backdrop-filter: blur(14px);
+      border-top: 1px solid rgba(255,255,255,0.07);
+    }
+    .tb-group { display: flex; align-items: center; gap: 0.3rem; }
+    .tb-btn {
+      width: 38px; height: 38px; flex-shrink: 0;
+      background: rgba(255,255,255,0.09); border: none; border-radius: 50%;
+      color: rgba(255,255,255,0.85); font-size: 0.95rem;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: background 0.2s, color 0.2s;
+      text-decoration: none;
+    }
+    .tb-btn:hover  { background: rgba(255,255,255,0.18); color: #fff; }
+    .tb-btn.active { background: rgba(255,255,255,0.9);  color: #111; }
+    #current-room-name {
+      font-size: 0.78rem; color: rgba(255,255,255,0.55);
+      max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #collapse-icon { transition: transform 0.3s; }
+    #bottom-ui.strip-hidden #collapse-icon { transform: rotate(180deg); }
+
+    /* ── Room filmstrip ─────────────────────────────── */
+    #room-strip {
+      background: rgba(12,12,12,0.93); backdrop-filter: blur(10px);
+      overflow-x: auto; overflow-y: hidden;
+      white-space: nowrap; padding: 0.7rem 1rem 0.85rem;
+      scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) transparent;
+    }
+    #room-strip::-webkit-scrollbar { height: 4px; }
+    #room-strip::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 2px; }
+
+    /* ── Room card ──────────────────────────────────── */
+    .room-card {
+      display: inline-flex; flex-direction: column; vertical-align: top;
+      width: 158px; border-radius: 8px; overflow: hidden;
+      border: 2.5px solid transparent;
+      cursor: pointer; transition: border-color 0.2s, opacity 0.2s;
+      background: #1c1c1c; margin-right: 0.55rem; position: relative;
+    }
+    .room-card:last-child { margin-right: 0; }
+    .room-card:hover:not(.no-image) { border-color: rgba(255,255,255,0.5); }
+    .room-card.active  { border-color: #fff; }
+    .room-card.no-image { opacity: 0.4; cursor: default; }
+
+    .room-card-img {
+      width: 100%; height: 96px; object-fit: cover; display: block;
+    }
+    .room-card-placeholder {
+      width: 100%; height: 96px;
+      display: flex; align-items: center; justify-content: center;
+      background: #252525; color: rgba(255,255,255,0.25); font-size: 1.9rem;
+    }
+    .room-card-badge {
+      position: absolute; top: 5px; left: 6px;
+      background: rgba(0,0,0,0.6); border-radius: 4px;
+      padding: 2px 5px; display: flex; align-items: center; gap: 3px;
+      font-size: 0.6rem; color: rgba(255,255,255,0.9);
+      font-weight: 700; letter-spacing: 0.04em;
+    }
+    .room-card-badge i { font-size: 0.65rem; }
+    .room-card-label {
+      padding: 0.3rem 0.5rem 0.35rem; background: #1c1c1c;
+      font-size: 0.73rem; color: rgba(255,255,255,0.88); font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    /* ── No-images state ────────────────────────────── */
+    #no-tour {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      text-align: center; color: #fff;
+    }
+    #no-tour i { font-size: 3rem; opacity: 0.35; display: block; margin-bottom: 1rem; }
+    #no-tour h3 { font-size: 1.4rem; font-weight: 600; margin-bottom: 0.5rem; }
+    #no-tour p  { color: rgba(255,255,255,0.45); margin-bottom: 1.5rem; }
+    .btn-ghost {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.5rem 1.2rem;
+      background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 8px; color: #fff; text-decoration: none; font-size: 0.88rem;
+      transition: background 0.2s;
+    }
+    .btn-ghost:hover { background: rgba(255,255,255,0.16); color: #fff; }
+
+    /* Hide Pannellum's own back-button hint that may overlap */
+    .pnlm-about-msg { display: none !important; }
+  </style>
+</head>
+<body>
+
+<% if (!firstScene) { %>
+
+  <div id="no-tour">
+    <i class="bi bi-camera-video-off"></i>
+    <h3><%= tour.name %></h3>
+    <p>No 360° images have been uploaded for this tour yet.</p>
+    <% if (!embedMode) { %>
+      <a href="/" class="btn-ghost"><i class="bi bi-arrow-left"></i> Back to Tours</a>
+    <% } %>
+  </div>
+
+<% } else { %>
+
+  <!-- 360° viewer -->
+  <div id="panorama"></div>
+
+  <% if (!embedMode) { %>
+  <!-- Top-left: back + tour name -->
+  <div id="top-bar">
+    <a href="/" id="back-btn" title="Back to Tours"><i class="bi bi-arrow-left"></i></a>
+    <div id="tour-info-pill">
+      <div class="presenter">Powered by Tourbine</div>
+      <div class="tour-name">
+        <i class="bi bi-geo-alt-fill"></i>
+        <span><%= tour.name %></span>
+      </div>
+    </div>
+  </div>
+  <% } %>
+
+  <!-- Bottom: toolbar + filmstrip -->
+  <div id="bottom-ui">
+
+    <div id="toolbar">
+      <!-- Left controls -->
+      <div class="tb-group">
+        <button id="collapse-btn" class="tb-btn" title="Toggle room strip">
+          <i class="bi bi-chevron-down" id="collapse-icon"></i>
+        </button>
+        <button id="autorotate-btn" class="tb-btn" title="Auto-rotate">
+          <i class="bi bi-arrow-repeat"></i>
+        </button>
+      </div>
+
+      <!-- Centre: current room name -->
+      <div id="current-room-name"></div>
+
+      <!-- Right controls -->
+      <div class="tb-group">
+        <% if (!embedMode) { %>
+        <button id="share-btn" class="tb-btn" title="Copy link">
+          <i class="bi bi-share"></i>
+        </button>
+        <% } %>
+        <button id="fullscreen-btn" class="tb-btn" title="Fullscreen">
+          <i class="bi bi-fullscreen"></i>
+        </button>
+        <% if (!embedMode && isAuthenticated) { %>
+        <a href="/dashboard/tours/<%= tour.id %>/rooms"
+           class="tb-btn" title="Manage in Dashboard">
+          <i class="bi bi-sliders"></i>
+        </a>
+        <% } %>
+      </div>
+    </div>
+
+    <!-- Room filmstrip -->
+    <div id="room-strip">
+      <% for (const room of rooms) { %>
+        <div class="room-card <%= room.image_path ? '' : 'no-image' %>"
+             data-scene="room-<%= room.id %>"
+             data-name="<%= room.name %>">
+
+          <% if (room.image_path) { %>
+            <img src="/<%= room.image_path %>" class="room-card-img"
+                 alt="<%= room.name %>" loading="lazy">
+            <div class="room-card-badge">
+              <i class="bi bi-arrow-repeat"></i> 360°
+            </div>
+          <% } else { %>
+            <div class="room-card-placeholder"><i class="bi bi-image"></i></div>
+          <% } %>
+
+          <div class="room-card-label"><%= room.name %></div>
+        </div>
+      <% } %>
+    </div>
+
+  </div><!-- #bottom-ui -->
+
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+  <script>
+    const SCENES     = <%- scenes %>;
+    const FIRST      = '<%= firstScene %>';
+    let autorotating = false;
+    let stripHidden  = false;
+
+    /* ── Init viewer ─────────────────────────────── */
+    const viewer = pannellum.viewer('panorama', {
+      default: {
+        firstScene: FIRST,
+        sceneFadeDuration: 1000,
+        autoLoad: true,
+        showControls: true,
+        compass: false
+      },
+      scenes: SCENES
+    });
+
+    /* ── Highlight active room ───────────────────── */
+    function setActive(sceneId) {
+      document.querySelectorAll('.room-card').forEach(el => {
+        el.classList.toggle('active', el.dataset.scene === sceneId);
+      });
+      const card = document.querySelector(`.room-card[data-scene="${sceneId}"]`);
+      if (card) {
+        document.getElementById('current-room-name').textContent = card.dataset.name;
+        card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+      }
+    }
+
+    viewer.on('scenechange', sceneId => setActive(sceneId));
+    setActive(FIRST);
+
+    /* ── Room card clicks ────────────────────────── */
+    document.querySelectorAll('.room-card:not(.no-image)').forEach(el => {
+      el.addEventListener('click', () => viewer.loadScene(el.dataset.scene));
+    });
+
+    /* ── Collapse / expand filmstrip ─────────────── */
+    document.getElementById('collapse-btn').addEventListener('click', () => {
+      stripHidden = !stripHidden;
+      document.getElementById('bottom-ui').classList.toggle('strip-hidden', stripHidden);
+    });
+
+    /* ── Auto-rotate ─────────────────────────────── */
+    document.getElementById('autorotate-btn').addEventListener('click', () => {
+      autorotating = !autorotating;
+      document.getElementById('autorotate-btn').classList.toggle('active', autorotating);
+      autorotating ? viewer.startAutoRotate() : viewer.stopAutoRotate();
+    });
+
+    /* ── Fullscreen ──────────────────────────────── */
+    const fsBtn  = document.getElementById('fullscreen-btn');
+    const fsIcon = fsBtn.querySelector('i');
+    fsBtn.addEventListener('click', () => {
+      document.fullscreenElement
+        ? document.exitFullscreen()
+        : document.documentElement.requestFullscreen();
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const inFS = !!document.fullscreenElement;
+      fsIcon.className = inFS ? 'bi bi-fullscreen-exit' : 'bi bi-fullscreen';
+    });
+
+    /* ── Share (copy URL) ────────────────────────── */
+    const shareBtn = document.getElementById('share-btn');
+    if (shareBtn) {
+      shareBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(window.location.href).then(() => {
+          const icon = shareBtn.querySelector('i');
+          icon.className = 'bi bi-check2';
+          setTimeout(() => { icon.className = 'bi bi-share'; }, 2000);
+        }).catch(() => {});
+      });
+    }
+  </script>
+
+<% } %>
+</body>
+</html>

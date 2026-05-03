@@ -1,0 +1,286 @@
+<%- include('../partials/header', { title, extraHead: room && room.image_path
+  ? '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"><link rel="stylesheet" href="/css/pannellum-picker.css">'
+  : '' }) %>
+<main class="container py-5">
+  <nav aria-label="breadcrumb" class="mb-4">
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item"><a href="/dashboard">Dashboard</a></li>
+      <li class="breadcrumb-item"><a href="/dashboard/tours/<%= tour.id %>/rooms"><%= tour.name %></a></li>
+      <li class="breadcrumb-item active"><%= room ? room.name : 'New Room' %></li>
+    </ol>
+  </nav>
+
+  <div class="card mx-auto" style="max-width: 700px;">
+    <div class="card-header">
+      <h5 class="mb-0"><%= room ? 'Edit Room' : 'New Room' %></h5>
+    </div>
+    <div class="card-body">
+      <% if (error) { %>
+        <div class="alert alert-danger"><%= error %></div>
+      <% } %>
+      <form method="POST" enctype="multipart/form-data"
+            action="<%= room
+              ? `/dashboard/tours/${tour.id}/rooms/${room.id}?_method=PUT&_csrf=${encodeURIComponent(csrfToken)}`
+              : `/dashboard/tours/${tour.id}/rooms?_csrf=${encodeURIComponent(csrfToken)}` %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="mb-3">
+          <label for="name" class="form-label">Room Name <span class="text-danger">*</span></label>
+          <input type="text" id="name" name="name" class="form-control" required
+                 value="<%= room ? room.name : '' %>" placeholder="e.g. Entrance Hall">
+        </div>
+
+        <div class="mb-3">
+          <label for="image" class="form-label">Photo Sphere Image</label>
+          <% if (room && room.image_path) { %>
+            <div class="mb-2">
+              <img src="/<%= room.image_path %>" class="img-thumbnail" style="max-height:120px;" alt="Current image">
+              <div class="text-muted small mt-1">Current image — upload a new one to replace it</div>
+            </div>
+          <% } %>
+          <input type="file" id="image" name="image" class="form-control"
+                 accept="image/jpeg,image/png,image/webp">
+          <div class="form-text">JPEG, PNG, or WebP. Max 100 MB. Use an equirectangular (2:1) image for best results.</div>
+        </div>
+
+        <div class="row g-3 mb-2">
+          <div class="col">
+            <label for="initial_pitch" class="form-label">Initial Pitch</label>
+            <input type="number" id="initial_pitch" name="initial_pitch" class="form-control"
+                   min="-90" max="90" step="0.1" value="<%= room ? room.initial_pitch : 0 %>">
+            <div class="form-text">Vertical angle (-90 to 90)</div>
+          </div>
+          <div class="col">
+            <label for="initial_yaw" class="form-label">Initial Yaw</label>
+            <input type="number" id="initial_yaw" name="initial_yaw" class="form-control"
+                   min="-180" max="180" step="0.1" value="<%= room ? room.initial_yaw : 0 %>">
+            <div class="form-text">Horizontal angle (-180 to 180)</div>
+          </div>
+        </div>
+
+        <% if (room && room.image_path) { %>
+        <!-- 360° preview for setting initial pitch/yaw -->
+        <div class="mb-3">
+          <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="toggle-preview-btn">
+            <i class="bi bi-camera"></i> Set initial view from panorama
+          </button>
+          <div id="preview-section" style="display:none;">
+            <div id="pnlm-preview" class="mb-2"></div>
+            <div class="d-flex align-items-center gap-2">
+              <span class="text-muted small"><i class="bi bi-arrows-move"></i> Drag to navigate — the crosshair marks the center</span>
+              <button type="button" class="btn btn-sm btn-success ms-auto" id="capture-initial-btn">
+                <i class="bi bi-check-lg"></i> Use this view
+              </button>
+            </div>
+          </div>
+        </div>
+        <% } %>
+
+        <div class="mb-3 form-check">
+          <input type="checkbox" id="is_default" name="is_default" class="form-check-input"
+                 <%= room && room.is_default ? 'checked' : '' %>>
+          <label for="is_default" class="form-check-label">Set as default room</label>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-check-lg"></i> <%= room ? 'Save Changes' : 'Create Room' %>
+          </button>
+          <a href="/dashboard/tours/<%= tour.id %>/rooms" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <% if (room) { %>
+    <div class="card mx-auto mt-4" style="max-width: 700px;">
+      <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-arrow-right-circle"></i> Hotspots</h5>
+      </div>
+      <div class="card-body">
+        <% if (hotspots.length === 0) { %>
+          <p class="text-muted small">No hotspots yet.</p>
+        <% } else { %>
+          <ul class="list-group list-group-flush mb-3">
+            <% for (const hs of hotspots) { %>
+              <li class="list-group-item">
+                <div class="d-flex flex-wrap gap-2 align-items-end">
+                  <form action="/dashboard/hotspots/<%= hs.id %>?_method=PUT" method="POST" class="row g-2 align-items-end flex-grow-1">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <div class="col-12 col-md-3">
+                      <label class="form-label small">To Room</label>
+                      <select name="to_room_id" class="form-select form-select-sm" required>
+                        <% for (const r of allRooms) { %>
+                          <option value="<%= r.id %>" <%= r.id === hs.to_room_id ? 'selected' : '' %>><%= r.name %></option>
+                        <% } %>
+                      </select>
+                    </div>
+                    <div class="col-6 col-md-2">
+                      <label class="form-label small">Pitch</label>
+                      <input type="number" name="pitch" class="form-control form-control-sm"
+                             value="<%= hs.pitch %>" step="0.1" min="-90" max="90">
+                    </div>
+                    <div class="col-6 col-md-2">
+                      <label class="form-label small">Yaw</label>
+                      <input type="number" name="yaw" class="form-control form-control-sm"
+                             value="<%= hs.yaw %>" step="0.1" min="-180" max="180">
+                    </div>
+                    <div class="col-12 col-md-3">
+                      <label class="form-label small">Label</label>
+                      <input type="text" name="text" class="form-control form-control-sm"
+                             value="<%= hs.text %>" placeholder="Optional label">
+                    </div>
+                    <div class="col-12 col-md-2">
+                      <button type="submit" class="btn btn-outline-primary btn-sm w-100"><i class="bi bi-check2"></i> Update</button>
+                    </div>
+                  </form>
+                  <form action="/dashboard/hotspots/<%= hs.id %>?_method=DELETE" method="POST"
+                        onsubmit="return confirm('Delete this hotspot?')">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+                  </form>
+                </div>
+              </li>
+            <% } %>
+          </ul>
+        <% } %>
+
+        <% if (allRooms.length > 0) { %>
+          <hr>
+          <h6>Add Hotspot</h6>
+          <form method="POST" action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/hotspots" id="add-hotspot-form">
+            <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+            <div class="mb-2">
+              <label class="form-label small">Link to Room</label>
+              <select name="to_room_id" class="form-select form-select-sm" required>
+                <option value="">Select a room…</option>
+                <% for (const r of allRooms) { %>
+                  <option value="<%= r.id %>"><%= r.name %></option>
+                <% } %>
+              </select>
+            </div>
+            <div class="row g-2 mb-2">
+              <div class="col">
+                <label class="form-label small">Pitch</label>
+                <input type="number" name="pitch" id="hs-pitch" class="form-control form-control-sm" value="0" step="0.1" min="-90" max="90">
+              </div>
+              <div class="col">
+                <label class="form-label small">Yaw</label>
+                <input type="number" name="yaw" id="hs-yaw" class="form-control form-control-sm" value="0" step="0.1" min="-180" max="180">
+              </div>
+            </div>
+            <% if (room.image_path) { %>
+            <div class="mb-2">
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-picker-btn">
+                <i class="bi bi-crosshair"></i> Pick position from panorama
+              </button>
+              <div id="picker-section" style="display:none;" class="mt-2">
+                <div id="pnlm-hotspot-picker" class="mb-2"></div>
+                <div class="d-flex align-items-center gap-2">
+                  <span class="text-muted small"><i class="bi bi-arrows-move"></i> Aim the crosshair at the hotspot position</span>
+                  <button type="button" class="btn btn-sm btn-success ms-auto" id="capture-hs-btn">
+                    <i class="bi bi-check-lg"></i> Use crosshair position
+                  </button>
+                </div>
+              </div>
+            </div>
+            <% } %>
+            <div class="mb-2">
+              <label class="form-label small">Label (optional)</label>
+              <input type="text" name="text" class="form-control form-control-sm" placeholder="e.g. Go to kitchen">
+            </div>
+            <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Add Hotspot</button>
+          </form>
+        <% } else { %>
+          <p class="text-muted small mt-2">Add more rooms to this tour to create hotspots.</p>
+        <% } %>
+      </div>
+    </div>
+  <% } %>
+</main>
+
+<% if (room && room.image_path) { %>
+<script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+<script>
+  const PANORAMA_URL = '/<%= room.image_path %>';
+  const INIT_PITCH   = <%= room.initial_pitch || 0 %>;
+  const INIT_YAW     = <%= room.initial_yaw || 0 %>;
+
+  /* ── Initial view picker ──────────────────────────── */
+  let previewViewer = null;
+
+  document.getElementById('toggle-preview-btn').addEventListener('click', () => {
+    const section = document.getElementById('preview-section');
+    if (section.style.display === 'none') {
+      section.style.display = 'block';
+      if (!previewViewer) {
+        previewViewer = pannellum.viewer('pnlm-preview', {
+          type: 'equirectangular',
+          panorama: PANORAMA_URL,
+          pitch: INIT_PITCH,
+          yaw: INIT_YAW,
+          autoLoad: true,
+          showControls: false,
+          compass: false,
+          mouseZoom: false,
+        });
+        // overlay crosshair
+        const ch = document.createElement('div');
+        ch.className = 'pick-crosshair';
+        document.getElementById('pnlm-preview').appendChild(ch);
+      }
+    } else {
+      section.style.display = 'none';
+    }
+  });
+
+  document.getElementById('capture-initial-btn').addEventListener('click', () => {
+    if (!previewViewer) return;
+    const p = previewViewer.getPitch().toFixed(1);
+    const y = previewViewer.getYaw().toFixed(1);
+    document.getElementById('initial_pitch').value = p;
+    document.getElementById('initial_yaw').value = y;
+    document.getElementById('preview-section').style.display = 'none';
+  });
+
+  <% if (allRooms.length > 0) { %>
+  /* ── Hotspot position picker ──────────────────────── */
+  let pickerViewer = null;
+
+  document.getElementById('toggle-picker-btn').addEventListener('click', () => {
+    const section = document.getElementById('picker-section');
+    if (section.style.display === 'none') {
+      section.style.display = 'block';
+      if (!pickerViewer) {
+        pickerViewer = pannellum.viewer('pnlm-hotspot-picker', {
+          type: 'equirectangular',
+          panorama: PANORAMA_URL,
+          pitch: parseFloat(document.getElementById('hs-pitch').value) || 0,
+          yaw: parseFloat(document.getElementById('hs-yaw').value) || 0,
+          autoLoad: true,
+          showControls: false,
+          compass: false,
+          mouseZoom: false,
+        });
+        // overlay crosshair
+        const ch = document.createElement('div');
+        ch.className = 'pick-crosshair';
+        document.getElementById('pnlm-hotspot-picker').appendChild(ch);
+      }
+    } else {
+      section.style.display = 'none';
+    }
+  });
+
+  document.getElementById('capture-hs-btn').addEventListener('click', () => {
+    if (!pickerViewer) return;
+    const p = pickerViewer.getPitch().toFixed(1);
+    const y = pickerViewer.getYaw().toFixed(1);
+    document.getElementById('hs-pitch').value = p;
+    document.getElementById('hs-yaw').value = y;
+    document.getElementById('picker-section').style.display = 'none';
+  });
+  <% } %>
+</script>
+<% } %>
+
+<%- include('../partials/footer', {}) %>
