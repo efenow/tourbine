@@ -16,7 +16,7 @@
         <div class="alert alert-danger"><%= error %></div>
       <% } %>
       <form method="POST" enctype="multipart/form-data"
-            action="<%= tour ? `/dashboard/tours/${tour.id}?_method=PUT` : '/dashboard/tours' %>">
+            action="<%= tour ? `/dashboard/tours/${tour.id}?_method=PUT&_csrf=${encodeURIComponent(csrfToken)}` : `/dashboard/tours?_csrf=${encodeURIComponent(csrfToken)}` %>">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="mb-3">
           <label for="name" class="form-label">Tour Name <span class="text-danger">*</span></label>
