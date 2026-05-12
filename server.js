@@ -1,8 +1,8 @@
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const methodOverride = require('method-override');
 const session = require('express-session');
-const { csrfSync } = require('csrf-sync');
 const db = require('./src/db');
 const { attachUser } = require('./src/auth');
 
@@ -24,7 +24,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 function getOrCreateSessionSecret() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'session_secret'").get();
   if (row) return row.value;
-  const crypto = require('crypto');
   const secret = crypto.randomBytes(48).toString('hex');
   db.prepare("INSERT INTO settings (key, value) VALUES ('session_secret', ?)").run(secret);
   return secret;
@@ -42,24 +41,54 @@ app.use(session({
   }
 }));
 
-// CSRF protection (synchroniser token pattern — stores token in session)
-// getTokenFromRequest checks both body (URL-encoded forms) and query string
-// (multipart/form-data forms, where req.body is not yet parsed by multer at middleware time)
-const { generateToken, csrfSynchronisedProtection } = csrfSync({
-  getTokenFromRequest: (req) =>
-    (req.body && req.body._csrf) || (req.query && req.query._csrf),
-});
+// CSRF protection (synchronizer token pattern using session storage)
+app.use((req, res, next) => {
+  if (!req.session.csrfToken) {
+    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+  }
 
-app.use(csrfSynchronisedProtection);
+  // Make CSRF token available in all EJS templates
+  res.locals.csrfToken = req.session.csrfToken;
+
+  // Only validate unsafe methods
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    return next();
+  }
+
+  // Check body (URL-encoded forms), query string (multipart/form-data flows), and header (AJAX)
+  const requestToken = (req.body && req.body._csrf)
+    || (req.query && req.query._csrf)
+    || req.get('x-csrf-token');
+
+  if (!requestToken) {
+    const err = new Error('Invalid or missing CSRF token.');
+    err.code = 'EBADCSRFTOKEN';
+    return next(err);
+  }
+
+  const sessionToken = req.session.csrfToken;
+  const csrfTokenPattern = /^[a-f0-9]{64}$/i;
+  if (!csrfTokenPattern.test(requestToken) || !csrfTokenPattern.test(sessionToken)) {
+    const err = new Error('Invalid or missing CSRF token.');
+    err.code = 'EBADCSRFTOKEN';
+    return next(err);
+  }
+
+  const requestTokenBuffer = Buffer.from(requestToken, 'hex');
+  const sessionTokenBuffer = Buffer.from(sessionToken, 'hex');
+  const tokensMatch = crypto.timingSafeEqual(requestTokenBuffer, sessionTokenBuffer);
+
+  if (!tokensMatch) {
+    const err = new Error('Invalid or missing CSRF token.');
+    err.code = 'EBADCSRFTOKEN';
+    return next(err);
+  }
+
+  return next();
+});
 
 // Attach user (if logged in) for templates and downstream handlers
 app.use(attachUser);
-
-// Make CSRF token available in all EJS templates
-app.use((req, res, next) => {
-  try { res.locals.csrfToken = generateToken(req); } catch (e) { res.locals.csrfToken = ''; }
-  next();
-});
 
 app.use('/', require('./src/routes/index'));
 app.use('/tour', require('./src/routes/tours'));
@@ -73,7 +102,7 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   if (err.code === 'EBADCSRFTOKEN') {
     if (!res.locals.csrfToken) {
-      try { res.locals.csrfToken = generateToken(req); } catch (e) { res.locals.csrfToken = ''; }
+      res.locals.csrfToken = req.session.csrfToken;
     }
     return res.status(403).render('error', { title: 'Forbidden', status: 403, message: 'Invalid or missing CSRF token.' });
   }
@@ -90,4 +119,3 @@ if (require.main === module) {
 }
 
 module.exports = app;
-
