@@ -67,9 +67,16 @@ app.use((req, res, next) => {
   }
 
   const sessionToken = req.session.csrfToken;
-  const requestTokenDigest = crypto.createHash('sha256').update(requestToken, 'utf8').digest();
-  const sessionTokenDigest = crypto.createHash('sha256').update(sessionToken, 'utf8').digest();
-  const tokensMatch = crypto.timingSafeEqual(requestTokenDigest, sessionTokenDigest);
+  const csrfTokenPattern = /^[a-f0-9]{64}$/i;
+  if (!csrfTokenPattern.test(requestToken) || !csrfTokenPattern.test(sessionToken)) {
+    const err = new Error('Invalid or missing CSRF token.');
+    err.code = 'EBADCSRFTOKEN';
+    return next(err);
+  }
+
+  const requestTokenBuffer = Buffer.from(requestToken, 'hex');
+  const sessionTokenBuffer = Buffer.from(sessionToken, 'hex');
+  const tokensMatch = crypto.timingSafeEqual(requestTokenBuffer, sessionTokenBuffer);
 
   if (!tokensMatch) {
     const err = new Error('Invalid or missing CSRF token.');
