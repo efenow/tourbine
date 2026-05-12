@@ -60,13 +60,19 @@ app.use((req, res, next) => {
     || (req.query && req.query._csrf)
     || req.get('x-csrf-token');
 
+  if (!requestToken) {
+    const err = new Error('Invalid or missing CSRF token.');
+    err.code = 'EBADCSRFTOKEN';
+    return next(err);
+  }
+
   const sessionToken = req.session.csrfToken;
-  const requestTokenBuffer = Buffer.from(requestToken || '', 'utf8');
-  const sessionTokenBuffer = Buffer.from(sessionToken || '', 'utf8');
+  const requestTokenBuffer = Buffer.from(requestToken, 'utf8');
+  const sessionTokenBuffer = Buffer.from(sessionToken, 'utf8');
   const tokensMatch = requestTokenBuffer.length === sessionTokenBuffer.length
     && crypto.timingSafeEqual(requestTokenBuffer, sessionTokenBuffer);
 
-  if (!requestToken || !tokensMatch) {
+  if (!tokensMatch) {
     const err = new Error('Invalid or missing CSRF token.');
     err.code = 'EBADCSRFTOKEN';
     return next(err);
@@ -89,7 +95,7 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   if (err.code === 'EBADCSRFTOKEN') {
-    if (!res.locals.csrfToken && req.session && req.session.csrfToken) {
+    if (!res.locals.csrfToken) {
       res.locals.csrfToken = req.session.csrfToken;
     }
     return res.status(403).render('error', { title: 'Forbidden', status: 403, message: 'Invalid or missing CSRF token.' });
