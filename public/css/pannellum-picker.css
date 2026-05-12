@@ -45,3 +45,48 @@
   top: -1px;
   left: -12px;
 }
+
+/* Privacy editor (blur / mosaic tools) */
+.privacy-editor-empty {
+  border: 1px dashed #c8d0dc;
+  border-radius: 8px;
+  padding: 0.75rem;
+  color: #657086;
+  background: #f8f9fb;
+  font-size: 0.875rem;
+}
+
+.privacy-editor-root {
+  border: 1px solid #d7dbe4;
+  border-radius: 8px;
+  padding: 0.6rem;
+  background: #fff;
+}
+
+.privacy-editor-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.55rem;
+}
+
+.privacy-editor-toolbar input[type="range"] {
+  width: 130px;
+  display: block;
+}
+
+.privacy-editor-canvas-wrap {
+  border: 1px solid #d7dbe4;
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 430px;
+  background: #111;
+}
+
+#privacy-editor-canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  cursor: crosshair;
+}
