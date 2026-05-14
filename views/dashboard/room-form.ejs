@@ -1,6 +1,14 @@
-<%- include('../partials/header', { title, extraHead: room && room.image_path
-  ? '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"><link rel="stylesheet" href="/css/pannellum-picker.css">'
-  : '' }) %>
+<%
+  const extraHeadParts = ['<link rel="stylesheet" href="/css/pannellum-picker.css">'];
+  const rawRoomImagePath = room && room.image_path
+    ? String(room.image_path).replace(/\\/g, '/')
+    : '';
+  const safeRoomImagePath = /^uploads\/[a-f0-9]{24}\.(?:jpe?g|png|webp)$/i.test(rawRoomImagePath) ? rawRoomImagePath : '';
+  if (safeRoomImagePath) {
+    extraHeadParts.unshift('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">');
+  }
+%>
+<%- include('../partials/header', { title, extraHead: extraHeadParts.join('') }) %>
 <main class="container py-5">
   <nav aria-label="breadcrumb" class="mb-4">
     <ol class="breadcrumb">
@@ -31,15 +39,51 @@
 
         <div class="mb-3">
           <label for="image" class="form-label">Photo Sphere Image</label>
-          <% if (room && room.image_path) { %>
+          <% if (safeRoomImagePath) { %>
             <div class="mb-2">
-              <img src="/<%= room.image_path %>" class="img-thumbnail" style="max-height:120px;" alt="Current image">
+              <img src="/<%= safeRoomImagePath %>" class="img-thumbnail" style="max-height:120px;" alt="Current image">
               <div class="text-muted small mt-1">Current image — upload a new one to replace it</div>
             </div>
           <% } %>
           <input type="file" id="image" name="image" class="form-control"
                  accept="image/jpeg,image/png,image/webp">
           <div class="form-text">JPEG, PNG, or WebP. Max 100 MB. Use an equirectangular (2:1) image for best results.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Privacy Tools</label>
+          <div id="privacy-editor-empty" class="privacy-editor-empty">
+            Select an image to enable blur and mosaic tools.
+          </div>
+          <div id="privacy-editor-root" class="privacy-editor-root" style="display:none;">
+            <div class="privacy-editor-toolbar">
+              <div class="btn-group btn-group-sm" role="group" aria-label="Privacy tools">
+                <button type="button" class="btn btn-outline-secondary active" id="privacy-tool-blur">
+                  <i class="bi bi-droplet-half"></i> Blur
+                </button>
+                <button type="button" class="btn btn-outline-secondary" id="privacy-tool-mosaic">
+                  <i class="bi bi-grid-3x3-gap"></i> Mosaic
+                </button>
+              </div>
+              <label class="small mb-0">
+                Brush
+                <input type="range" id="privacy-brush-size" min="20" max="260" value="90">
+              </label>
+              <label class="small mb-0">
+                Strength
+                <input type="range" id="privacy-tool-strength" min="4" max="40" value="14">
+              </label>
+              <button type="button" class="btn btn-sm btn-outline-danger ms-auto" id="privacy-reset-btn">
+                <i class="bi bi-arrow-counterclockwise"></i> Reset
+              </button>
+            </div>
+            <div class="privacy-editor-canvas-wrap">
+              <canvas id="privacy-editor-canvas"></canvas>
+            </div>
+            <div class="form-text">
+              Drag on the image to apply the selected effect. Saving the room will upload the edited image.
+            </div>
+          </div>
         </div>
 
         <div class="row g-3 mb-2">
@@ -57,7 +101,7 @@
           </div>
         </div>
 
-        <% if (room && room.image_path) { %>
+        <% if (safeRoomImagePath) { %>
         <!-- 360° preview for setting initial pitch/yaw -->
         <div class="mb-3">
           <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="toggle-preview-btn">
@@ -168,7 +212,7 @@
                 <input type="number" name="yaw" id="hs-yaw" class="form-control form-control-sm" value="0" step="0.1" min="-180" max="180">
               </div>
             </div>
-            <% if (room.image_path) { %>
+            <% if (safeRoomImagePath) { %>
             <div class="mb-2">
               <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-picker-btn">
                 <i class="bi bi-crosshair"></i> Pick position from panorama
@@ -198,10 +242,265 @@
   <% } %>
 </main>
 
-<% if (room && room.image_path) { %>
+<script>
+  (() => {
+    const imageInput = document.getElementById('image');
+    const editorRoot = document.getElementById('privacy-editor-root');
+    const editorEmpty = document.getElementById('privacy-editor-empty');
+    const canvas = document.getElementById('privacy-editor-canvas');
+    const blurBtn = document.getElementById('privacy-tool-blur');
+    const mosaicBtn = document.getElementById('privacy-tool-mosaic');
+    const brushSizeInput = document.getElementById('privacy-brush-size');
+    const strengthInput = document.getElementById('privacy-tool-strength');
+    const resetBtn = document.getElementById('privacy-reset-btn');
+    const form = imageInput ? imageInput.closest('form') : null;
+
+    if (!imageInput || !editorRoot || !canvas || !form) return;
+
+    const existingImageUrl = <%- JSON.stringify(safeRoomImagePath ? ('/' + safeRoomImagePath) : '') %>;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const sourceCanvas = document.createElement('canvas');
+    const sourceCtx = sourceCanvas.getContext('2d');
+    const tempCanvas = document.createElement('canvas');
+    const tempCtx = tempCanvas.getContext('2d');
+
+    const MAX_EDIT_WIDTH = 4096;
+    // 0.92 keeps panoramic details visually sharp while still reducing upload size vs. lossless output.
+    const OUTPUT_JPEG_QUALITY = 0.92;
+    const EDITED_FILE_SUFFIX = '-edited';
+    const supportsEditedUpload = typeof DataTransfer !== 'undefined' && typeof File !== 'undefined';
+    let tool = 'blur';
+    let painting = false;
+    let hasImage = false;
+    let dirty = false;
+    let objectUrl = null;
+
+    function setTool(nextTool) {
+      tool = nextTool;
+      blurBtn.classList.toggle('active', tool === 'blur');
+      mosaicBtn.classList.toggle('active', tool === 'mosaic');
+    }
+
+    function setEditorVisible(visible) {
+      editorRoot.style.display = visible ? 'block' : 'none';
+      editorEmpty.style.display = visible ? 'none' : 'block';
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function sanitizeFilename(name) {
+      return String(name || '')
+        .replace(/\.[a-z0-9]+$/i, '')
+        .replace(/[^a-z0-9_-]+/gi, '-')
+        .replace(/^-+|-+$/g, '') || 'room-image';
+    }
+
+    function getCanvasPoint(evt) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (evt.clientX - rect.left) * (canvas.width / rect.width);
+      const y = (evt.clientY - rect.top) * (canvas.height / rect.height);
+      return { x, y };
+    }
+
+    function renderFromSource() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(sourceCanvas, 0, 0);
+    }
+
+    function loadImage(img) {
+      let targetWidth = img.naturalWidth || img.width;
+      let targetHeight = img.naturalHeight || img.height;
+      if (!targetWidth || !targetHeight) return;
+
+      if (targetWidth > MAX_EDIT_WIDTH) {
+        const ratio = MAX_EDIT_WIDTH / targetWidth;
+        targetWidth = MAX_EDIT_WIDTH;
+        targetHeight = Math.max(1, Math.round(targetHeight * ratio));
+      }
+
+      sourceCanvas.width = targetWidth;
+      sourceCanvas.height = targetHeight;
+      sourceCtx.clearRect(0, 0, targetWidth, targetHeight);
+      sourceCtx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      renderFromSource();
+
+      hasImage = true;
+      dirty = false;
+      setEditorVisible(true);
+    }
+
+    function loadImageFromUrl(url) {
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload = () => loadImage(img);
+      img.src = url;
+    }
+
+    function loadFromFile(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = URL.createObjectURL(file);
+      loadImageFromUrl(objectUrl);
+    }
+
+    function applyBlur(x, y, brushSize, strength) {
+      const radius = Math.max(1, Math.floor(brushSize / 2));
+      const blurRadius = Math.max(1, Math.round(strength / 4));
+      const sx = clamp(Math.floor(x - radius - blurRadius), 0, canvas.width - 1);
+      const sy = clamp(Math.floor(y - radius - blurRadius), 0, canvas.height - 1);
+      const sw = Math.max(1, Math.min(canvas.width - sx, radius * 2 + blurRadius * 2));
+      const sh = Math.max(1, Math.min(canvas.height - sy, radius * 2 + blurRadius * 2));
+
+      tempCanvas.width = sw;
+      tempCanvas.height = sh;
+      tempCtx.clearRect(0, 0, sw, sh);
+      tempCtx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.filter = `blur(${blurRadius}px)`;
+      ctx.drawImage(tempCanvas, sx, sy, sw, sh);
+      ctx.filter = 'none';
+      ctx.restore();
+    }
+
+    function applyMosaic(x, y, brushSize, strength) {
+      const radius = Math.max(1, Math.floor(brushSize / 2));
+      const sx = clamp(Math.floor(x - radius), 0, canvas.width - 1);
+      const sy = clamp(Math.floor(y - radius), 0, canvas.height - 1);
+      const sw = Math.max(1, Math.min(canvas.width - sx, radius * 2));
+      const sh = Math.max(1, Math.min(canvas.height - sy, radius * 2));
+      const block = Math.max(2, Math.round(strength / 2));
+
+      const imageData = ctx.getImageData(sx, sy, sw, sh);
+      const data = imageData.data;
+
+      for (let yy = 0; yy < sh; yy += block) {
+        for (let xx = 0; xx < sw; xx += block) {
+          const base = (yy * sw + xx) * 4;
+          const r = data[base];
+          const g = data[base + 1];
+          const b = data[base + 2];
+          const a = data[base + 3];
+          const yMax = Math.min(yy + block, sh);
+          const xMax = Math.min(xx + block, sw);
+
+          for (let y2 = yy; y2 < yMax; y2 += 1) {
+            for (let x2 = xx; x2 < xMax; x2 += 1) {
+              const i = (y2 * sw + x2) * 4;
+              data[i] = r;
+              data[i + 1] = g;
+              data[i + 2] = b;
+              data[i + 3] = a;
+            }
+          }
+        }
+      }
+
+      tempCanvas.width = sw;
+      tempCanvas.height = sh;
+      tempCtx.putImageData(imageData, 0, 0);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.clip();
+      ctx.drawImage(tempCanvas, sx, sy, sw, sh);
+      ctx.restore();
+    }
+
+    function paint(evt) {
+      if (!hasImage) return;
+      const { x, y } = getCanvasPoint(evt);
+      const brushSize = parseInt(brushSizeInput.value, 10) || 90;
+      const strength = parseInt(strengthInput.value, 10) || 14;
+      if (tool === 'mosaic') applyMosaic(x, y, brushSize, strength);
+      else applyBlur(x, y, brushSize, strength);
+      dirty = true;
+    }
+
+    blurBtn.addEventListener('click', () => setTool('blur'));
+    mosaicBtn.addEventListener('click', () => setTool('mosaic'));
+    resetBtn.addEventListener('click', () => {
+      if (!hasImage) return;
+      renderFromSource();
+      dirty = false;
+    });
+
+    canvas.addEventListener('pointerdown', (evt) => {
+      if (!hasImage) return;
+      painting = true;
+      canvas.setPointerCapture(evt.pointerId);
+      paint(evt);
+    });
+    canvas.addEventListener('pointermove', (evt) => {
+      if (!painting) return;
+      paint(evt);
+    });
+    canvas.addEventListener('pointerup', (evt) => {
+      if (!painting) return;
+      painting = false;
+      canvas.releasePointerCapture(evt.pointerId);
+    });
+    canvas.addEventListener('pointerleave', () => {
+      painting = false;
+    });
+
+    if (!supportsEditedUpload) {
+      setEditorVisible(false);
+      editorEmpty.textContent = 'Blur and mosaic tools require a newer browser with file editing support.';
+      return;
+    }
+
+    imageInput.addEventListener('change', () => {
+      const [file] = imageInput.files || [];
+      if (file) {
+        loadFromFile(file);
+      } else if (existingImageUrl) {
+        loadImageFromUrl(existingImageUrl);
+      } else {
+        hasImage = false;
+        dirty = false;
+        setEditorVisible(false);
+      }
+    });
+
+    form.addEventListener('submit', (evt) => {
+      if (!hasImage || !dirty) return;
+      evt.preventDefault();
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          window.alert('Could not apply privacy edits. The original image will be submitted.');
+          form.submit();
+          return;
+        }
+        const originalName = (imageInput.files && imageInput.files[0] && imageInput.files[0].name) || 'room-image';
+        const baseName = sanitizeFilename(originalName);
+        const editedFile = new File([blob], `${baseName}${EDITED_FILE_SUFFIX}.jpg`, { type: 'image/jpeg' });
+        const dt = new DataTransfer();
+        dt.items.add(editedFile);
+        imageInput.files = dt.files;
+        form.submit();
+      }, 'image/jpeg', OUTPUT_JPEG_QUALITY);
+    });
+
+    setTool('blur');
+    setEditorVisible(false);
+    if (existingImageUrl) loadImageFromUrl(existingImageUrl);
+  })();
+</script>
+
+<% if (safeRoomImagePath) { %>
 <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
 <script>
-  const PANORAMA_URL = '/<%= room.image_path %>';
+  const PANORAMA_URL = '/<%= safeRoomImagePath %>';
   const INIT_PITCH   = <%= room.initial_pitch || 0 %>;
   const INIT_YAW     = <%= room.initial_yaw || 0 %>;
 
