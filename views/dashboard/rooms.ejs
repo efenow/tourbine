@@ -65,7 +65,7 @@
             </thead>
             <tbody>
             <% for (let i = 0; i < rooms.length; i++) { const room = rooms[i]; %>
-              <% const mediaKind = room.media_kind || (room.image_path ? '360_image' : '360_image'); %>
+              <% const mediaKind = room.media_kind || '360_image'; %>
               <% const mediaPath = room.media_path || room.image_path || null; %>
               <% const hasMedia = !!mediaPath || !!room.media_embed_url; %>
               <tr>

@@ -267,7 +267,7 @@
     <div id="room-strip">
       <% for (const room of rooms) { %>
         <%
-          const mediaKind = room.media_kind || (room.image_path ? '360_image' : '360_image');
+          const mediaKind = room.media_kind || '360_image';
           const mediaPath = room.media_path || room.image_path || null;
           const hasMedia = !!mediaPath || !!room.media_embed_url;
           let mediaLabel = '360°';
@@ -332,11 +332,12 @@
       flatViewerEl.innerHTML = '';
     }
 
-    function showFlatViewer(html) {
+    function showFlatViewerNode(node) {
       panoramaEl.style.display = 'none';
       hidePannellum();
       flatViewerEl.style.display = 'flex';
-      flatViewerEl.innerHTML = html;
+      flatViewerEl.innerHTML = '';
+      if (node) flatViewerEl.appendChild(node);
     }
 
     function hidePannellum() {
@@ -366,31 +367,35 @@
       return viewer;
     }
 
-    function escapeHtml(value) {
-      return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-    }
+    function createStillInfoPointNode(point) {
+      const x = Number(point.x_percent);
+      const y = Number(point.y_percent);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      const xSafe = Math.max(0, Math.min(100, x));
+      const ySafe = Math.max(0, Math.min(100, y));
 
-    function renderStillInfoPoints(infoPoints) {
-      return (infoPoints || [])
-        .filter(p => p.x_percent != null && p.y_percent != null)
-        .map(p => {
-          const title = escapeHtml(p.title);
-          const text = escapeHtml(p.text);
-          return `
-            <div class="still-info-point" style="left:${Number(p.x_percent)}%;top:${Number(p.y_percent)}%;">
-              <div class="still-info-tooltip">
-                ${title ? `<div><strong>${title}</strong></div>` : ''}
-                ${text ? `<div>${text}</div>` : ''}
-              </div>
-            </div>
-          `;
-        })
-        .join('');
+      const marker = document.createElement('div');
+      marker.className = 'still-info-point';
+      marker.style.left = `${xSafe}%`;
+      marker.style.top = `${ySafe}%`;
+
+      const tooltip = document.createElement('div');
+      tooltip.className = 'still-info-tooltip';
+      if (point.title) {
+        const title = document.createElement('div');
+        const strong = document.createElement('strong');
+        strong.textContent = point.title;
+        title.appendChild(strong);
+        tooltip.appendChild(title);
+      }
+      if (point.text) {
+        const text = document.createElement('div');
+        text.textContent = point.text;
+        tooltip.appendChild(text);
+      }
+
+      marker.appendChild(tooltip);
+      return marker;
     }
 
     function loadRoom(roomKey) {
@@ -408,22 +413,43 @@
       }
 
       if (room.media_kind === 'still_image' && room.media_path) {
-        const infoHtml = renderStillInfoPoints(room.info_points);
-        showFlatViewer(`<div class="still-stage"><img src="${room.media_path}" alt="${escapeHtml(room.name)}">${infoHtml}</div>`);
+        const stage = document.createElement('div');
+        stage.className = 'still-stage';
+        const image = document.createElement('img');
+        image.src = room.media_path;
+        image.alt = room.name || '';
+        stage.appendChild(image);
+        (room.info_points || []).forEach(point => {
+          const node = createStillInfoPointNode(point);
+          if (node) stage.appendChild(node);
+        });
+        showFlatViewerNode(stage);
         return;
       }
 
       if (room.media_kind === 'local_video' && room.media_path) {
-        showFlatViewer(`<video src="${room.media_path}" controls preload="metadata"></video>`);
+        const video = document.createElement('video');
+        video.src = room.media_path;
+        video.controls = true;
+        video.preload = 'metadata';
+        showFlatViewerNode(video);
         return;
       }
 
       if ((room.media_kind === 'youtube_video' || room.media_kind === 'vimeo_video') && room.media_embed_url) {
-        showFlatViewer(`<iframe src="${room.media_embed_url}" allowfullscreen loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>`);
+        const frame = document.createElement('iframe');
+        frame.src = room.media_embed_url;
+        frame.allowFullscreen = true;
+        frame.loading = 'lazy';
+        frame.referrerPolicy = 'strict-origin-when-cross-origin';
+        showFlatViewerNode(frame);
         return;
       }
 
-      showFlatViewer('<div class="text-white-50">No media for this room.</div>');
+      const empty = document.createElement('div');
+      empty.className = 'text-white-50';
+      empty.textContent = 'No media for this room.';
+      showFlatViewerNode(empty);
     }
 
     if (currentRoomId) loadRoom(currentRoomId);

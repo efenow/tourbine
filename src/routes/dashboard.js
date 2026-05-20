@@ -19,6 +19,8 @@ const MEDIA_LOCAL_VIDEO = 'local_video';
 const MEDIA_YOUTUBE_VIDEO = 'youtube_video';
 const MEDIA_VIMEO_VIDEO = 'vimeo_video';
 const MEDIA_KINDS = [MEDIA_360_IMAGE, MEDIA_STILL_IMAGE, MEDIA_LOCAL_VIDEO, MEDIA_YOUTUBE_VIDEO, MEDIA_VIMEO_VIDEO];
+const YOUTUBE_VIDEO_ID_LENGTH = 11;
+const YOUTUBE_ID_PATTERN = new RegExp(`^[a-zA-Z0-9_-]{${YOUTUBE_VIDEO_ID_LENGTH}}$`);
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -111,12 +113,13 @@ function normalizeExternalVideoUrl(kind, input) {
         else if (parsed.pathname.startsWith('/shorts/')) id = parsed.pathname.split('/')[2] || '';
       }
       id = String(id || '').trim();
-      if (!/^[a-zA-Z0-9_-]{11}$/.test(id)) return null;
+      // YouTube video IDs are currently 11 characters.
+      if (!YOUTUBE_ID_PATTERN.test(id)) return null;
       return `https://www.youtube.com/embed/${id}`;
     }
     if (kind === MEDIA_VIMEO_VIDEO) {
       const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
-      if (!host.endsWith('vimeo.com')) return null;
+      if (!(host === 'vimeo.com' || host.endsWith('.vimeo.com'))) return null;
       const match = parsed.pathname.match(/(\d+)/);
       if (!match) return null;
       return `https://player.vimeo.com/video/${match[1]}`;
@@ -144,13 +147,13 @@ function getRoomFormContext(tour, room = null, error = null) {
     ? db.prepare('SELECT * FROM info_points WHERE room_id = ? ORDER BY id ASC').all(currentRoom.id)
     : [];
 
-  const media_kind = normalizeMediaKind(currentRoom && currentRoom.media_kind, currentRoom && currentRoom.image_path ? MEDIA_360_IMAGE : MEDIA_360_IMAGE);
-  const media_path = currentRoom && (currentRoom.media_path || currentRoom.image_path) ? (currentRoom.media_path || currentRoom.image_path) : null;
+  const media_kind = normalizeMediaKind(currentRoom && currentRoom.media_kind, MEDIA_360_IMAGE);
+  const resolvedMediaPath = currentRoom ? (currentRoom.media_path || currentRoom.image_path || null) : null;
 
   return {
     title: currentRoom ? `Edit Room — ${currentRoom.name}` : 'New Room',
     tour,
-    room: currentRoom ? { ...currentRoom, media_kind, media_path } : null,
+    room: currentRoom ? { ...currentRoom, media_kind, media_path: resolvedMediaPath } : null,
     allRooms,
     hotspots,
     infoPoints,
@@ -465,7 +468,7 @@ router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
       newTourId,
       room.name,
       newRoomSlug,
-      normalizeMediaKind(room.media_kind, room.image_path ? MEDIA_360_IMAGE : MEDIA_360_IMAGE),
+      normalizeMediaKind(room.media_kind, MEDIA_360_IMAGE),
       isExternalVideoKind(room.media_kind) ? (room.media_embed_url || null) : null,
       room.initial_pitch,
       room.initial_yaw,
@@ -529,7 +532,7 @@ router.get('/tours/:tourId/rooms/new', requireEditor, (req, res) => {
 
 // POST /dashboard/tours/:tourId/rooms
 router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
-  upload.single('image')(req, res, (err) => {
+  upload.single('media_file')(req, res, (err) => {
     const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
     if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
 
@@ -600,7 +603,7 @@ router.get('/tours/:tourId/rooms/:roomId/edit', requireEditor, (req, res) => {
 
 // PUT /dashboard/tours/:tourId/rooms/:roomId
 router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
-  upload.single('image')(req, res, (err) => {
+  upload.single('media_file')(req, res, (err) => {
     const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
     if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
     const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
@@ -620,8 +623,8 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
     }
 
     const slug = uniqueRoomSlug(tour.id, name.trim(), room.id);
-    const currentMediaKind = normalizeMediaKind(room.media_kind, room.image_path ? MEDIA_360_IMAGE : MEDIA_360_IMAGE);
-    let mediaKind = normalizeMediaKind(media_kind, currentMediaKind);
+    const currentMediaKind = normalizeMediaKind(room.media_kind, MEDIA_360_IMAGE);
+    const mediaKind = normalizeMediaKind(media_kind, currentMediaKind);
     let mediaPath = room.media_path || room.image_path || null;
     let mediaEmbedUrl = room.media_embed_url || null;
 
@@ -729,7 +732,7 @@ router.post('/tours/:tourId/rooms/:roomId/info-points', requireEditor, (req, res
   const infoTitle = String(title || '').trim();
   const infoText = String(text || '').trim();
   if (!infoTitle && !infoText) {
-    return res.status(400).render('error', { title: 'Error', status: 400, message: 'Info point title or description is required' });
+    return res.status(400).render('error', { title: 'Error', status: 400, message: 'Info point title or text is required' });
   }
 
   db.prepare(`
@@ -840,7 +843,7 @@ router.put('/info-points/:id', requireEditor, (req, res) => {
   const infoTitle = String(title || '').trim();
   const infoText = String(text || '').trim();
   if (!infoTitle && !infoText) {
-    return res.status(400).render('error', { title: 'Error', status: 400, message: 'Info point title or description is required' });
+    return res.status(400).render('error', { title: 'Error', status: 400, message: 'Info point title or text is required' });
   }
 
   db.prepare(`

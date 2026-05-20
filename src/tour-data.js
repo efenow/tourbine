@@ -9,7 +9,7 @@ const MEDIA_VIMEO_VIDEO = 'vimeo_video';
 function normalizeMediaKind(room) {
   const kind = String(room.media_kind || '').trim();
   if ([MEDIA_360_IMAGE, MEDIA_STILL_IMAGE, MEDIA_LOCAL_VIDEO, MEDIA_YOUTUBE_VIDEO, MEDIA_VIMEO_VIDEO].includes(kind)) return kind;
-  return room.image_path ? MEDIA_360_IMAGE : MEDIA_360_IMAGE;
+  return MEDIA_360_IMAGE;
 }
 
 function getLocalMediaPath(room) {

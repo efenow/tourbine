@@ -65,7 +65,7 @@
               <div class="text-muted small mt-1">Current video — upload a new file to replace it</div>
             </div>
           <% } %>
-          <input type="file" id="image" name="image" class="form-control"
+          <input type="file" id="image" name="media_file" class="form-control"
                  accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/ogg,video/quicktime">
           <div class="form-text">JPEG, PNG, WebP, MP4, WebM, OGG, or MOV. Max 100 MB.</div>
         </div>
@@ -763,6 +763,7 @@
 
     image.addEventListener('click', (evt) => {
       const rect = image.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
       const x = ((evt.clientX - rect.left) / rect.width) * 100;
       const y = ((evt.clientY - rect.top) / rect.height) * 100;
       const xRounded = Math.max(0, Math.min(100, Number(x.toFixed(1))));
