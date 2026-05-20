@@ -463,6 +463,40 @@ describe('Room CRUD', () => {
       .send({ _csrf: delToken });
     expect([302, 303]).toContain(res.status);
   });
+
+  test('POST /dashboard/tours/:tourId/rooms — rejects invalid YouTube URL', async () => {
+    const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
+    const token = csrf(page.text);
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+      .send({
+        _csrf: token,
+        name: 'Bad YouTube Room',
+        media_kind: 'youtube_video',
+        external_video_url: 'https://example.com/video',
+        initial_pitch: '0',
+        initial_yaw: '0'
+      })
+      .expect(200);
+    expect(res.text).toContain('valid YouTube or Vimeo URL');
+  });
+
+  test('POST /dashboard/tours/:tourId/rooms — creates YouTube video room', async () => {
+    const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
+    const token = csrf(page.text);
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+      .send({
+        _csrf: token,
+        name: 'YouTube Room',
+        media_kind: 'youtube_video',
+        external_video_url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        initial_pitch: '0',
+        initial_yaw: '0'
+      });
+    expect([302, 303]).toContain(res.status);
+    const rooms = await agent.get(`/dashboard/tours/${tourId}/rooms`).expect(200);
+    expect(rooms.text).toContain('YouTube Room');
+    expect(rooms.text).toContain('YouTube');
+  });
 });
 
 // ─── 6. Room move-up / move-down ─────────────────────────────────────────────
@@ -624,7 +658,70 @@ describe('Hotspot CRUD', () => {
   });
 });
 
-// ─── 8. User management ──────────────────────────────────────────────────────
+// ─── 8. Info point CRUD ───────────────────────────────────────────────────────
+
+describe('Info point CRUD', () => {
+  let app, dbPath, agent;
+  let tourId, roomId, infoPointId;
+
+  beforeAll(async () => {
+    ({ app, dbPath } = makeApp());
+    agent = request.agent(app);
+    await doSetup(agent);
+
+    const page = await agent.get('/dashboard/tours/new').expect(200);
+    const t = csrf(page.text);
+    await agent.post('/dashboard/tours').type('form').send({ _csrf: t, name: 'Info Point Tour' });
+
+    const dash = await agent.get('/dashboard').expect(200);
+    tourId = parseInt(dash.text.match(/\/dashboard\/tours\/(\d+)\/edit/)[1], 10);
+
+    const roomPage = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
+    const roomToken = csrf(roomPage.text);
+    await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(roomToken)}`).type('form')
+      .send({ _csrf: roomToken, name: 'Info Room', initial_pitch: '0', initial_yaw: '0' });
+
+    const rooms = await agent.get(`/dashboard/tours/${tourId}/rooms`).expect(200);
+    roomId = parseInt(rooms.text.match(/\/rooms\/(\d+)\/edit/)[1], 10);
+  });
+
+  afterAll(() => cleanupDb(dbPath));
+
+  test('POST /dashboard/tours/:tourId/rooms/:roomId/info-points creates info point', async () => {
+    const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomId}/edit`).expect(200);
+    const token = csrf(page.text);
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms/${roomId}/info-points`).type('form')
+      .send({ _csrf: token, pitch: '2.5', yaw: '-10', title: 'About this room', text: 'Welcome info' });
+    expect([302, 303]).toContain(res.status);
+
+    const updated = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomId}/edit`).expect(200);
+    expect(updated.text).toContain('About this room');
+    const m = updated.text.match(/info-points\/(\d+)\?_method=PUT/);
+    expect(m).toBeTruthy();
+    infoPointId = parseInt(m[1], 10);
+  });
+
+  test('PUT /dashboard/info-points/:id updates info point', async () => {
+    const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomId}/edit`).expect(200);
+    const token = csrf(page.text);
+    const res = await agent.post(`/dashboard/info-points/${infoPointId}?_method=PUT`).type('form')
+      .send({ _csrf: token, pitch: '0', yaw: '0', x_percent: '25', y_percent: '40', title: 'Updated title', text: 'Updated text' });
+    expect([302, 303]).toContain(res.status);
+
+    const updated = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomId}/edit`).expect(200);
+    expect(updated.text).toContain('Updated title');
+  });
+
+  test('DELETE /dashboard/info-points/:id deletes info point', async () => {
+    const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomId}/edit`).expect(200);
+    const token = csrf(page.text);
+    const res = await agent.post(`/dashboard/info-points/${infoPointId}?_method=DELETE`).type('form')
+      .send({ _csrf: token });
+    expect([302, 303]).toContain(res.status);
+  });
+});
+
+// ─── 9. User management ──────────────────────────────────────────────────────
 
 describe('User management', () => {
   let app, dbPath, sysAdminAgent, adminAgent, userAgent;
@@ -867,7 +964,7 @@ describe('User management', () => {
   });
 });
 
-// ─── 9. Public tour viewer ────────────────────────────────────────────────────
+// ─── 10. Public tour viewer ────────────────────────────────────────────────────
 
 describe('Public tour viewer', () => {
   let app, dbPath, agent;
@@ -926,7 +1023,7 @@ describe('Public tour viewer', () => {
   });
 });
 
-// ─── 10. API endpoints ────────────────────────────────────────────────────────
+// ─── 11. API endpoints ────────────────────────────────────────────────────────
 
 describe('API endpoints', () => {
   let app, dbPath, agent;
@@ -971,7 +1068,7 @@ describe('API endpoints', () => {
   });
 });
 
-// ─── 11. 404 handler ─────────────────────────────────────────────────────────
+// ─── 12. 404 handler ─────────────────────────────────────────────────────────
 
 describe('404 handler', () => {
   let app, dbPath;

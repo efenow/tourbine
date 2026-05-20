@@ -34,6 +34,9 @@ db.exec(`
     name TEXT NOT NULL,
     slug TEXT NOT NULL,
     image_path TEXT DEFAULT NULL,
+    media_kind TEXT DEFAULT '360_image',
+    media_path TEXT DEFAULT NULL,
+    media_embed_url TEXT DEFAULT NULL,
     initial_pitch REAL DEFAULT 0,
     initial_yaw REAL DEFAULT 0,
     is_default INTEGER DEFAULT 0,
@@ -51,6 +54,18 @@ db.exec(`
     text TEXT DEFAULT '',
     FOREIGN KEY (from_room_id) REFERENCES rooms(id) ON DELETE CASCADE,
     FOREIGN KEY (to_room_id) REFERENCES rooms(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS info_points (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    room_id INTEGER NOT NULL,
+    pitch REAL DEFAULT NULL,
+    yaw REAL DEFAULT NULL,
+    x_percent REAL DEFAULT NULL,
+    y_percent REAL DEFAULT NULL,
+    title TEXT DEFAULT '',
+    text TEXT DEFAULT '',
+    FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS users (
@@ -77,6 +92,9 @@ db.exec(`
 // Safe migrations — these are no-ops if the column already exists
 try { db.exec('ALTER TABLE rooms ADD COLUMN sort_order INTEGER DEFAULT 0'); } catch (e) {}
 try { db.exec('ALTER TABLE tours ADD COLUMN cover_image_path TEXT DEFAULT NULL'); } catch (e) {}
+try { db.exec("ALTER TABLE rooms ADD COLUMN media_kind TEXT DEFAULT '360_image'"); } catch (e) {}
+try { db.exec('ALTER TABLE rooms ADD COLUMN media_path TEXT DEFAULT NULL'); } catch (e) {}
+try { db.exec('ALTER TABLE rooms ADD COLUMN media_embed_url TEXT DEFAULT NULL'); } catch (e) {}
 
 // Role migrations for legacy installs
 db.exec(`
@@ -98,6 +116,13 @@ if (systemAdmins.length === 0) {
 // Backfill sort_order for existing rows that are still 0 (set to rowid so existing tours get stable order)
 db.exec(`
   UPDATE rooms SET sort_order = id WHERE sort_order = 0
+`);
+
+db.exec(`
+  UPDATE rooms
+  SET media_path = image_path
+  WHERE media_path IS NULL
+    AND image_path IS NOT NULL
 `);
 
 // Create an initial system admin user from legacy password if no users exist yet

@@ -27,15 +27,17 @@ router.get('/:tourSlug', (req, res) => {
   const data = buildTourData(req.params.tourSlug);
   if (!data) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
 
-  const { tour, rooms, scenesObj, firstScene } = data;
-  const roomId = firstScene ? parseInt(firstScene.replace('room-', ''), 10) : null;
+  const { tour, rooms, scenesObj, roomDataObj, firstScene, firstRoomId } = data;
+  const roomId = firstRoomId || (firstScene ? parseInt(firstScene.replace('room-', ''), 10) : null);
   recordView(req, tour.id, roomId, false);
   res.render('tour', {
     title: tour.name,
     tour,
     rooms,
     scenes: JSON.stringify(scenesObj),
+    roomData: JSON.stringify(roomDataObj),
     firstScene,
+    firstRoomId,
     embedMode: false,
     isAuthenticated: !!(req.session && req.session.userId)
   });
@@ -45,15 +47,17 @@ router.get('/:tourSlug/embed', (req, res) => {
   const data = buildTourData(req.params.tourSlug);
   if (!data) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
 
-  const { tour, rooms, scenesObj, firstScene } = data;
-  const roomId = firstScene ? parseInt(firstScene.replace('room-', ''), 10) : null;
+  const { tour, rooms, scenesObj, roomDataObj, firstScene, firstRoomId } = data;
+  const roomId = firstRoomId || (firstScene ? parseInt(firstScene.replace('room-', ''), 10) : null);
   recordView(req, tour.id, roomId, true);
   res.render('tour', {
     title: tour.name,
     tour,
     rooms,
     scenes: JSON.stringify(scenesObj),
+    roomData: JSON.stringify(roomDataObj),
     firstScene,
+    firstRoomId,
     embedMode: true,
     isAuthenticated: false
   });
