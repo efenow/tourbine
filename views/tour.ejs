@@ -12,7 +12,62 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif; }
 
     /* ── Viewer ─────────────────────────────────────── */
-    #panorama { position: absolute; inset: 0; }
+    #panorama, #flat-viewer { position: absolute; inset: 0; }
+    #flat-viewer {
+      display: none;
+      background: #000;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    #flat-viewer img, #flat-viewer video, #flat-viewer iframe {
+      max-width: 100%;
+      max-height: 100%;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      border: 0;
+    }
+    .still-stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .still-stage img { width: 100%; height: 100%; object-fit: contain; }
+    .still-info-point {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: rgba(13,110,253,0.95);
+      border: 2px solid #fff;
+      transform: translate(-50%, -50%);
+      z-index: 4;
+      cursor: pointer;
+    }
+    .still-info-tooltip {
+      position: absolute;
+      left: 50%;
+      bottom: 125%;
+      transform: translateX(-50%);
+      min-width: 160px;
+      max-width: 240px;
+      background: rgba(0,0,0,0.85);
+      color: #fff;
+      font-size: 0.75rem;
+      padding: 0.45rem 0.55rem;
+      border-radius: 6px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s;
+      white-space: normal;
+      text-align: left;
+    }
+    .still-info-point:hover .still-info-tooltip { opacity: 1; }
 
     /* ── Top-left info bar ──────────────────────────── */
     #top-bar {
@@ -141,12 +196,12 @@
 </head>
 <body>
 
-<% if (!firstScene) { %>
+<% if (!firstRoomId) { %>
 
   <div id="no-tour">
     <i class="bi bi-camera-video-off"></i>
     <h3><%= tour.name %></h3>
-    <p>No 360° images have been uploaded for this tour yet.</p>
+    <p>No room media has been uploaded for this tour yet.</p>
     <% if (!embedMode) { %>
       <a href="/" class="btn-ghost"><i class="bi bi-arrow-left"></i> Back to Tours</a>
     <% } %>
@@ -154,8 +209,9 @@
 
 <% } else { %>
 
-  <!-- 360° viewer -->
+  <!-- Viewer -->
   <div id="panorama"></div>
+  <div id="flat-viewer"></div>
 
   <% if (!embedMode) { %>
   <!-- Top-left: back + tour name -->
@@ -210,15 +266,31 @@
     <!-- Room filmstrip -->
     <div id="room-strip">
       <% for (const room of rooms) { %>
-        <div class="room-card <%= room.image_path ? '' : 'no-image' %>"
+        <%
+          const mediaKind = room.media_kind || '360_image';
+          const mediaPath = room.media_path || room.image_path || null;
+          const hasMedia = !!mediaPath || !!room.media_embed_url;
+          let mediaLabel = '360°';
+          let mediaIcon = 'bi-arrow-repeat';
+          if (mediaKind === 'still_image') { mediaLabel = 'IMAGE'; mediaIcon = 'bi-image'; }
+          else if (mediaKind === 'local_video') { mediaLabel = 'VIDEO'; mediaIcon = 'bi-film'; }
+          else if (mediaKind === 'youtube_video') { mediaLabel = 'YOUTUBE'; mediaIcon = 'bi-youtube'; }
+          else if (mediaKind === 'vimeo_video') { mediaLabel = 'VIMEO'; mediaIcon = 'bi-play-btn'; }
+        %>
+        <div class="room-card <%= hasMedia ? '' : 'no-image' %>"
              data-scene="room-<%= room.id %>"
-             data-name="<%= room.name %>">
+              data-name="<%= room.name %>">
 
-          <% if (room.image_path) { %>
-            <img src="/<%= room.image_path %>" class="room-card-img"
+          <% if (mediaPath && (mediaKind === '360_image' || mediaKind === 'still_image')) { %>
+            <img src="/<%= mediaPath %>" class="room-card-img"
                  alt="<%= room.name %>" loading="lazy">
             <div class="room-card-badge">
-              <i class="bi bi-arrow-repeat"></i> 360°
+              <i class="bi <%= mediaIcon %>"></i> <%= mediaLabel %>
+            </div>
+          <% } else if (hasMedia) { %>
+            <div class="room-card-placeholder"><i class="bi <%= mediaIcon %>"></i></div>
+            <div class="room-card-badge">
+              <i class="bi <%= mediaIcon %>"></i> <%= mediaLabel %>
             </div>
           <% } else { %>
             <div class="room-card-placeholder"><i class="bi bi-image"></i></div>
@@ -233,41 +305,158 @@
 
   <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
   <script>
-    const SCENES     = <%- scenes %>;
-    const FIRST      = '<%= firstScene %>';
-    let autorotating = false;
-    let stripHidden  = false;
+    const SCENES       = <%- scenes %>;
+    const ROOM_DATA    = <%- roomData %>;
+    const FIRST_SCENE  = <%- JSON.stringify(firstScene || null) %>;
+    const FIRST_ROOM_ID = <%- JSON.stringify(firstRoomId || null) %>;
+    const panoramaEl   = document.getElementById('panorama');
+    const flatViewerEl = document.getElementById('flat-viewer');
+    let autorotating   = false;
+    let stripHidden    = false;
+    let viewer         = null;
+    let currentRoomId  = FIRST_ROOM_ID ? `room-${FIRST_ROOM_ID}` : FIRST_SCENE;
 
-    /* ── Init viewer ─────────────────────────────── */
-    const viewer = pannellum.viewer('panorama', {
-      default: {
-        firstScene: FIRST,
-        sceneFadeDuration: 1000,
-        autoLoad: true,
-        showControls: true,
-        compass: false
-      },
-      scenes: SCENES
-    });
-
-    /* ── Highlight active room ───────────────────── */
-    function setActive(sceneId) {
+    function setActive(roomKey) {
       document.querySelectorAll('.room-card').forEach(el => {
-        el.classList.toggle('active', el.dataset.scene === sceneId);
+        el.classList.toggle('active', el.dataset.scene === roomKey);
       });
-      const card = document.querySelector(`.room-card[data-scene="${sceneId}"]`);
+      const card = document.querySelector(`.room-card[data-scene="${roomKey}"]`);
       if (card) {
         document.getElementById('current-room-name').textContent = card.dataset.name;
         card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
       }
     }
 
-    viewer.on('scenechange', sceneId => setActive(sceneId));
-    setActive(FIRST);
+    function hideFlatViewer() {
+      flatViewerEl.style.display = 'none';
+      flatViewerEl.innerHTML = '';
+    }
+
+    function showFlatViewerNode(node) {
+      panoramaEl.style.display = 'none';
+      hidePannellum();
+      flatViewerEl.style.display = 'flex';
+      flatViewerEl.innerHTML = '';
+      if (node) flatViewerEl.appendChild(node);
+    }
+
+    function hidePannellum() {
+      if (!viewer) return;
+      viewer.stopAutoRotate();
+      autorotating = false;
+      document.getElementById('autorotate-btn').classList.remove('active');
+      panoramaEl.style.display = 'none';
+    }
+
+    function ensureViewer(firstScene) {
+      if (viewer) return viewer;
+      viewer = pannellum.viewer('panorama', {
+        default: {
+          firstScene,
+          sceneFadeDuration: 1000,
+          autoLoad: true,
+          showControls: true,
+          compass: false
+        },
+        scenes: SCENES
+      });
+      viewer.on('scenechange', sceneId => {
+        currentRoomId = sceneId;
+        setActive(sceneId);
+      });
+      return viewer;
+    }
+
+    function createStillInfoPointNode(point) {
+      const x = Number(point.x_percent);
+      const y = Number(point.y_percent);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+      const xSafe = Math.max(0, Math.min(100, x));
+      const ySafe = Math.max(0, Math.min(100, y));
+
+      const marker = document.createElement('div');
+      marker.className = 'still-info-point';
+      marker.style.left = `${xSafe}%`;
+      marker.style.top = `${ySafe}%`;
+
+      const tooltip = document.createElement('div');
+      tooltip.className = 'still-info-tooltip';
+      if (point.title) {
+        const title = document.createElement('div');
+        const strong = document.createElement('strong');
+        strong.textContent = point.title;
+        title.appendChild(strong);
+        tooltip.appendChild(title);
+      }
+      if (point.text) {
+        const text = document.createElement('div');
+        text.textContent = point.text;
+        tooltip.appendChild(text);
+      }
+
+      marker.appendChild(tooltip);
+      return marker;
+    }
+
+    function loadRoom(roomKey) {
+      const room = ROOM_DATA[roomKey];
+      if (!room) return;
+      currentRoomId = roomKey;
+      setActive(roomKey);
+
+      if (room.media_kind === '360_image' && room.media_path && SCENES[roomKey]) {
+        hideFlatViewer();
+        panoramaEl.style.display = 'block';
+        const v = ensureViewer(roomKey);
+        if (v.getScene() !== roomKey) v.loadScene(roomKey);
+        return;
+      }
+
+      if (room.media_kind === 'still_image' && room.media_path) {
+        const stage = document.createElement('div');
+        stage.className = 'still-stage';
+        const image = document.createElement('img');
+        image.src = room.media_path;
+        image.alt = room.name || '';
+        stage.appendChild(image);
+        (room.info_points || []).forEach(point => {
+          const node = createStillInfoPointNode(point);
+          if (node) stage.appendChild(node);
+        });
+        showFlatViewerNode(stage);
+        return;
+      }
+
+      if (room.media_kind === 'local_video' && room.media_path) {
+        const video = document.createElement('video');
+        video.src = room.media_path;
+        video.controls = true;
+        video.preload = 'metadata';
+        showFlatViewerNode(video);
+        return;
+      }
+
+      if ((room.media_kind === 'youtube_video' || room.media_kind === 'vimeo_video') && room.media_embed_url) {
+        const frame = document.createElement('iframe');
+        frame.src = room.media_embed_url;
+        frame.allowFullscreen = true;
+        frame.loading = 'lazy';
+        frame.referrerPolicy = 'strict-origin-when-cross-origin';
+        showFlatViewerNode(frame);
+        return;
+      }
+
+      const empty = document.createElement('div');
+      empty.className = 'text-white-50';
+      empty.textContent = 'No media for this room.';
+      showFlatViewerNode(empty);
+    }
+
+    if (currentRoomId) loadRoom(currentRoomId);
 
     /* ── Room card clicks ────────────────────────── */
     document.querySelectorAll('.room-card:not(.no-image)').forEach(el => {
-      el.addEventListener('click', () => viewer.loadScene(el.dataset.scene));
+      el.addEventListener('click', () => loadRoom(el.dataset.scene));
     });
 
     /* ── Collapse / expand filmstrip ─────────────── */
@@ -278,6 +467,7 @@
 
     /* ── Auto-rotate ─────────────────────────────── */
     document.getElementById('autorotate-btn').addEventListener('click', () => {
+      if (!viewer || panoramaEl.style.display === 'none') return;
       autorotating = !autorotating;
       document.getElementById('autorotate-btn').classList.toggle('active', autorotating);
       autorotating ? viewer.startAutoRotate() : viewer.stopAutoRotate();

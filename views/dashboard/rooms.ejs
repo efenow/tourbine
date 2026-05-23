@@ -59,12 +59,15 @@
               <th>Thumbnail</th>
               <th>Name</th>
               <th>Default</th>
-              <th>Image</th>
+                <th>Media</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
             <% for (let i = 0; i < rooms.length; i++) { const room = rooms[i]; %>
+              <% const mediaKind = room.media_kind || '360_image'; %>
+              <% const mediaPath = room.media_path || room.image_path || null; %>
+              <% const hasMedia = !!mediaPath || !!room.media_embed_url; %>
               <tr>
                 <td style="width:70px;">
                   <div class="d-flex flex-column gap-1">
@@ -92,10 +95,16 @@
                   </div>
                 </td>
                 <td style="width:80px;">
-                  <% if (room.image_path) { %>
-                    <img src="/<%= room.image_path %>" style="width:70px;height:45px;object-fit:cover;border-radius:4px;" alt="<%= room.name %>">
+                  <% if (mediaPath && (mediaKind === '360_image' || mediaKind === 'still_image')) { %>
+                    <img src="/<%= mediaPath %>" style="width:70px;height:45px;object-fit:cover;border-radius:4px;" alt="<%= room.name %>">
+                  <% } else if (mediaPath && mediaKind === 'local_video') { %>
+                    <div class="bg-dark text-white d-flex align-items-center justify-content-center rounded" style="width:70px;height:45px;font-size:0.7rem;"><i class="bi bi-film"></i></div>
+                  <% } else if (room.media_embed_url && mediaKind === 'youtube_video') { %>
+                    <div class="bg-danger text-white d-flex align-items-center justify-content-center rounded" style="width:70px;height:45px;font-size:0.7rem;"><i class="bi bi-youtube"></i></div>
+                  <% } else if (room.media_embed_url && mediaKind === 'vimeo_video') { %>
+                    <div class="bg-primary text-white d-flex align-items-center justify-content-center rounded" style="width:70px;height:45px;font-size:0.7rem;"><i class="bi bi-play-btn"></i></div>
                   <% } else { %>
-                    <div class="bg-secondary text-white d-flex align-items-center justify-content-center rounded" style="width:70px;height:45px;font-size:0.7rem;">No img</div>
+                    <div class="bg-secondary text-white d-flex align-items-center justify-content-center rounded" style="width:70px;height:45px;font-size:0.7rem;">No media</div>
                   <% } %>
                 </td>
                 <td class="fw-semibold"><%= room.name %></td>
@@ -107,8 +116,11 @@
                   <% } %>
                 </td>
                 <td>
-                  <% if (room.image_path) { %>
-                    <span class="badge bg-success"><i class="bi bi-check"></i> Uploaded</span>
+                  <% if (hasMedia) { %>
+                    <span class="badge bg-success"><i class="bi bi-check"></i> Ready</span>
+                    <span class="badge bg-light text-dark border">
+                      <%= mediaKind === '360_image' ? '360 Image' : mediaKind === 'still_image' ? 'Still Image' : mediaKind === 'local_video' ? 'Local Video' : mediaKind === 'youtube_video' ? 'YouTube' : 'Vimeo' %>
+                    </span>
                   <% } else { %>
                     <span class="badge bg-secondary">None</span>
                   <% } %>

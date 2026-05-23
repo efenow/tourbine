@@ -1,10 +1,14 @@
 <%
   const extraHeadParts = ['<link rel="stylesheet" href="/css/pannellum-picker.css">'];
-  const rawRoomImagePath = room && room.image_path
-    ? String(room.image_path).replace(/\\/g, '/')
+  const mediaKind = room && room.media_kind ? String(room.media_kind) : '360_image';
+  const rawRoomMediaPath = room && (room.media_path || room.image_path)
+    ? String(room.media_path || room.image_path).replace(/\\/g, '/')
     : '';
-  const safeRoomImagePath = /^uploads\/[a-f0-9]{24}\.(?:jpe?g|png|webp)$/i.test(rawRoomImagePath) ? rawRoomImagePath : '';
-  if (safeRoomImagePath) {
+  const safeRoomImagePath = /^uploads\/[a-f0-9]{24}\.(?:jpe?g|png|webp)$/i.test(rawRoomMediaPath) ? rawRoomMediaPath : '';
+  const safeRoomVideoPath = /^uploads\/[a-f0-9]{24}\.(?:mp4|webm|ogg|mov)$/i.test(rawRoomMediaPath) ? rawRoomMediaPath : '';
+  const canUsePannellumPickers = mediaKind === '360_image' && safeRoomImagePath;
+  const canUseStillInfoPicker = mediaKind === 'still_image' && safeRoomImagePath;
+  if (canUsePannellumPickers) {
     extraHeadParts.unshift('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css">');
   }
 %>
@@ -38,19 +42,43 @@
         </div>
 
         <div class="mb-3">
-          <label for="image" class="form-label">Photo Sphere Image</label>
+          <label for="media_kind" class="form-label">Room Media Type</label>
+          <select id="media_kind" name="media_kind" class="form-select">
+            <option value="360_image" <%= mediaKind === '360_image' ? 'selected' : '' %>>360 Image</option>
+            <option value="still_image" <%= mediaKind === 'still_image' ? 'selected' : '' %>>Still Image</option>
+            <option value="local_video" <%= mediaKind === 'local_video' ? 'selected' : '' %>>Local Video</option>
+            <option value="youtube_video" <%= mediaKind === 'youtube_video' ? 'selected' : '' %>>YouTube Video</option>
+            <option value="vimeo_video" <%= mediaKind === 'vimeo_video' ? 'selected' : '' %>>Vimeo Video</option>
+          </select>
+        </div>
+
+        <div class="mb-3" id="local-media-wrap">
+          <label for="image" class="form-label">Upload Media File</label>
           <% if (safeRoomImagePath) { %>
             <div class="mb-2">
               <img src="/<%= safeRoomImagePath %>" class="img-thumbnail" style="max-height:120px;" alt="Current image">
-              <div class="text-muted small mt-1">Current image — upload a new one to replace it</div>
+              <div class="text-muted small mt-1">Current image — upload a new file to replace it</div>
+            </div>
+          <% } else if (safeRoomVideoPath) { %>
+            <div class="mb-2">
+              <video src="/<%= safeRoomVideoPath %>" class="img-thumbnail" style="max-height:120px;" controls></video>
+              <div class="text-muted small mt-1">Current video — upload a new file to replace it</div>
             </div>
           <% } %>
-          <input type="file" id="image" name="image" class="form-control"
-                 accept="image/jpeg,image/png,image/webp">
-          <div class="form-text">JPEG, PNG, or WebP. Max 100 MB. Use an equirectangular (2:1) image for best results.</div>
+          <input type="file" id="image" name="media_file" class="form-control"
+                 accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/ogg,video/quicktime">
+          <div class="form-text">JPEG, PNG, WebP, MP4, WebM, OGG, or MOV. Max 100 MB.</div>
         </div>
 
-        <div class="mb-3">
+        <div class="mb-3" id="external-video-wrap">
+          <label for="external_video_url" class="form-label">Video URL</label>
+          <input type="url" id="external_video_url" name="external_video_url" class="form-control"
+                 placeholder="https://youtube.com/watch?v=... or https://vimeo.com/..."
+                 value="<%= room && room.media_embed_url ? room.media_embed_url : '' %>">
+          <div class="form-text">Used for YouTube and Vimeo room types.</div>
+        </div>
+
+        <div class="mb-3" id="privacy-tools-wrap">
           <label class="form-label">Privacy Tools</label>
           <div id="privacy-editor-empty" class="privacy-editor-empty">
             Select an image to enable blur and mosaic tools.
@@ -101,7 +129,7 @@
           </div>
         </div>
 
-        <% if (safeRoomImagePath) { %>
+        <% if (canUsePannellumPickers) { %>
         <!-- 360° preview for setting initial pitch/yaw -->
         <div class="mb-3">
           <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="toggle-preview-btn">
@@ -212,7 +240,7 @@
                 <input type="number" name="yaw" id="hs-yaw" class="form-control form-control-sm" value="0" step="0.1" min="-180" max="180">
               </div>
             </div>
-            <% if (safeRoomImagePath) { %>
+            <% if (canUsePannellumPickers) { %>
             <div class="mb-2">
               <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-picker-btn">
                 <i class="bi bi-crosshair"></i> Pick position from panorama
@@ -237,6 +265,111 @@
         <% } else { %>
           <p class="text-muted small mt-2">Add more rooms to this tour to create hotspots.</p>
         <% } %>
+
+        <hr>
+        <h6>Info Points</h6>
+        <% if (infoPoints.length === 0) { %>
+          <p class="text-muted small">No info points yet.</p>
+        <% } else { %>
+          <ul class="list-group list-group-flush mb-3">
+            <% for (const ip of infoPoints) { %>
+              <li class="list-group-item">
+                <div class="d-flex flex-wrap gap-2 align-items-end">
+                  <form action="/dashboard/info-points/<%= ip.id %>?_method=PUT" method="POST" class="row g-2 align-items-end flex-grow-1">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <div class="col-6 col-md-2">
+                      <label class="form-label small">Pitch</label>
+                      <input type="number" name="pitch" class="form-control form-control-sm" value="<%= ip.pitch != null ? ip.pitch : '' %>" step="0.1" min="-90" max="90">
+                    </div>
+                    <div class="col-6 col-md-2">
+                      <label class="form-label small">Yaw</label>
+                      <input type="number" name="yaw" class="form-control form-control-sm" value="<%= ip.yaw != null ? ip.yaw : '' %>" step="0.1" min="-180" max="180">
+                    </div>
+                    <div class="col-6 col-md-2">
+                      <label class="form-label small">X %</label>
+                      <input type="number" name="x_percent" class="form-control form-control-sm" value="<%= ip.x_percent != null ? ip.x_percent : '' %>" step="0.1" min="0" max="100">
+                    </div>
+                    <div class="col-6 col-md-2">
+                      <label class="form-label small">Y %</label>
+                      <input type="number" name="y_percent" class="form-control form-control-sm" value="<%= ip.y_percent != null ? ip.y_percent : '' %>" step="0.1" min="0" max="100">
+                    </div>
+                    <div class="col-12 col-md-2">
+                      <label class="form-label small">Title</label>
+                      <input type="text" name="title" class="form-control form-control-sm" value="<%= ip.title || '' %>">
+                    </div>
+                    <div class="col-12 col-md-2">
+                      <label class="form-label small">Text</label>
+                      <input type="text" name="text" class="form-control form-control-sm" value="<%= ip.text || '' %>">
+                    </div>
+                    <div class="col-12 col-md-2">
+                      <button type="submit" class="btn btn-outline-primary btn-sm w-100"><i class="bi bi-check2"></i> Update</button>
+                    </div>
+                  </form>
+                  <form action="/dashboard/info-points/<%= ip.id %>?_method=DELETE" method="POST" onsubmit="return confirm('Delete this info point?')">
+                    <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i></button>
+                  </form>
+                </div>
+              </li>
+            <% } %>
+          </ul>
+        <% } %>
+
+        <form method="POST" action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/info-points" id="add-info-point-form">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <div class="row g-2 mb-2">
+            <div class="col-6">
+              <label class="form-label small">Pitch (360)</label>
+              <input type="number" name="pitch" id="ip-pitch" class="form-control form-control-sm" value="" step="0.1" min="-90" max="90">
+            </div>
+            <div class="col-6">
+              <label class="form-label small">Yaw (360)</label>
+              <input type="number" name="yaw" id="ip-yaw" class="form-control form-control-sm" value="" step="0.1" min="-180" max="180">
+            </div>
+            <div class="col-6">
+              <label class="form-label small">X % (still image)</label>
+              <input type="number" name="x_percent" id="ip-x" class="form-control form-control-sm" value="" step="0.1" min="0" max="100">
+            </div>
+            <div class="col-6">
+              <label class="form-label small">Y % (still image)</label>
+              <input type="number" name="y_percent" id="ip-y" class="form-control form-control-sm" value="" step="0.1" min="0" max="100">
+            </div>
+          </div>
+          <% if (canUsePannellumPickers) { %>
+          <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="capture-ip-from-360-btn">
+            <i class="bi bi-crosshair"></i> Use current 360 picker view for Pitch/Yaw
+          </button>
+          <% } %>
+          <% if (canUseStillInfoPicker) { %>
+          <div class="mb-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-still-info-picker-btn">
+              <i class="bi bi-cursor"></i> Pick position from image
+            </button>
+            <div id="still-info-picker-section" style="display:none;" class="mt-2">
+              <div class="border rounded p-2 bg-light">
+                <div class="small text-muted mb-2">Click anywhere on the image to set X/Y position.</div>
+                <div id="still-info-picker-wrap" style="position:relative;display:inline-block;max-width:100%;">
+                  <img src="/<%= safeRoomImagePath %>" id="still-info-picker-image" class="img-fluid rounded" alt="Still image picker">
+                  <div id="still-info-picker-marker" style="position:absolute;left:0;top:0;width:14px;height:14px;border-radius:50%;background:#0d6efd;border:2px solid #fff;transform:translate(-50%, -50%);display:none;box-shadow:0 0 0 2px rgba(13,110,253,0.3);"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <% } %>
+          <div class="row g-2 mb-2">
+            <div class="col-12 col-md-4">
+              <label class="form-label small">Title</label>
+              <input type="text" name="title" class="form-control form-control-sm" placeholder="Optional title">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label small">Description</label>
+              <input type="text" name="text" class="form-control form-control-sm" placeholder="Info text">
+            </div>
+            <div class="col-12 col-md-2 d-flex align-items-end">
+              <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg"></i> Add</button>
+            </div>
+          </div>
+        </form>
       </div>
     </div>
   <% } %>
@@ -244,7 +377,28 @@
 
 <script>
   (() => {
+    const mediaKindSelect = document.getElementById('media_kind');
+    const localMediaWrap = document.getElementById('local-media-wrap');
+    const externalVideoWrap = document.getElementById('external-video-wrap');
+    const privacyToolsWrap = document.getElementById('privacy-tools-wrap');
     const imageInput = document.getElementById('image');
+
+    function updateMediaVisibility() {
+      if (!mediaKindSelect) return;
+      const kind = mediaKindSelect.value;
+      const isExternal = kind === 'youtube_video' || kind === 'vimeo_video';
+      const isImageKind = kind === '360_image' || kind === 'still_image';
+      if (localMediaWrap) localMediaWrap.style.display = isExternal ? 'none' : '';
+      if (externalVideoWrap) externalVideoWrap.style.display = isExternal ? '' : 'none';
+      if (privacyToolsWrap) privacyToolsWrap.style.display = isImageKind ? '' : 'none';
+      if (imageInput && isExternal) imageInput.value = '';
+    }
+
+    if (mediaKindSelect) {
+      mediaKindSelect.addEventListener('change', updateMediaVisibility);
+      updateMediaVisibility();
+    }
+
     const editorRoot = document.getElementById('privacy-editor-root');
     const editorEmpty = document.getElementById('privacy-editor-empty');
     const canvas = document.getElementById('privacy-editor-canvas');
@@ -497,7 +651,7 @@
   })();
 </script>
 
-<% if (safeRoomImagePath) { %>
+<% if (canUsePannellumPickers) { %>
 <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
 <script>
   const PANORAMA_URL = '/<%= safeRoomImagePath %>';
@@ -579,6 +733,48 @@
     document.getElementById('picker-section').style.display = 'none';
   });
   <% } %>
+
+  const captureIpBtn = document.getElementById('capture-ip-from-360-btn');
+  if (captureIpBtn) {
+    captureIpBtn.addEventListener('click', () => {
+      const sourceViewer = (typeof pickerViewer !== 'undefined' && pickerViewer) || previewViewer;
+      if (!sourceViewer) return;
+      document.getElementById('ip-pitch').value = sourceViewer.getPitch().toFixed(1);
+      document.getElementById('ip-yaw').value = sourceViewer.getYaw().toFixed(1);
+    });
+  }
+</script>
+<% } %>
+
+<% if (canUseStillInfoPicker) { %>
+<script>
+  (() => {
+    const toggleBtn = document.getElementById('toggle-still-info-picker-btn');
+    const section = document.getElementById('still-info-picker-section');
+    const image = document.getElementById('still-info-picker-image');
+    const marker = document.getElementById('still-info-picker-marker');
+    const xInput = document.getElementById('ip-x');
+    const yInput = document.getElementById('ip-y');
+    if (!toggleBtn || !section || !image || !marker || !xInput || !yInput) return;
+
+    toggleBtn.addEventListener('click', () => {
+      section.style.display = section.style.display === 'none' ? 'block' : 'none';
+    });
+
+    image.addEventListener('click', (evt) => {
+      const rect = image.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const x = ((evt.clientX - rect.left) / rect.width) * 100;
+      const y = ((evt.clientY - rect.top) / rect.height) * 100;
+      const xRounded = Math.max(0, Math.min(100, Number(x.toFixed(1))));
+      const yRounded = Math.max(0, Math.min(100, Number(y.toFixed(1))));
+      xInput.value = xRounded;
+      yInput.value = yRounded;
+      marker.style.left = `${xRounded}%`;
+      marker.style.top = `${yRounded}%`;
+      marker.style.display = 'block';
+    });
+  })();
 </script>
 <% } %>
 

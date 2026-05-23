@@ -13,6 +13,14 @@ const BCRYPT_ROUNDS = 12;
 const ROLE_SYSTEM_ADMIN = 'system_admin';
 const ROLE_ADMIN = 'admin';
 const ROLE_USER = 'user';
+const MEDIA_360_IMAGE = '360_image';
+const MEDIA_STILL_IMAGE = 'still_image';
+const MEDIA_LOCAL_VIDEO = 'local_video';
+const MEDIA_YOUTUBE_VIDEO = 'youtube_video';
+const MEDIA_VIMEO_VIDEO = 'vimeo_video';
+const MEDIA_KINDS = [MEDIA_360_IMAGE, MEDIA_STILL_IMAGE, MEDIA_LOCAL_VIDEO, MEDIA_YOUTUBE_VIDEO, MEDIA_VIMEO_VIDEO];
+const YOUTUBE_VIDEO_ID_LENGTH = 11;
+const YOUTUBE_ID_PATTERN = new RegExp(`^[a-zA-Z0-9_-]{${YOUTUBE_VIDEO_ID_LENGTH}}$`);
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -74,6 +82,83 @@ function unlinkFile(imagePath) {
     const resolved = path.join(uploadsDir, filename);
     fs.unlinkSync(resolved);
   } catch (e) { /* file may not exist */ }
+}
+
+function normalizeMediaKind(value, fallback = MEDIA_360_IMAGE) {
+  const kind = String(value || '').trim();
+  return MEDIA_KINDS.includes(kind) ? kind : fallback;
+}
+
+function isExternalVideoKind(kind) {
+  return kind === MEDIA_YOUTUBE_VIDEO || kind === MEDIA_VIMEO_VIDEO;
+}
+
+function isImageKind(kind) {
+  return kind === MEDIA_360_IMAGE || kind === MEDIA_STILL_IMAGE;
+}
+
+function normalizeExternalVideoUrl(kind, input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (kind === MEDIA_YOUTUBE_VIDEO) {
+      const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+      let id = '';
+      if (host === 'youtu.be') {
+        id = parsed.pathname.replace(/\//g, '').trim();
+      } else if (host === 'youtube.com' || host === 'm.youtube.com') {
+        if (parsed.pathname === '/watch') id = parsed.searchParams.get('v') || '';
+        else if (parsed.pathname.startsWith('/embed/')) id = parsed.pathname.split('/')[2] || '';
+        else if (parsed.pathname.startsWith('/shorts/')) id = parsed.pathname.split('/')[2] || '';
+      }
+      id = String(id || '').trim();
+      // YouTube video IDs are currently 11 characters.
+      if (!YOUTUBE_ID_PATTERN.test(id)) return null;
+      return `https://www.youtube.com/embed/${id}`;
+    }
+    if (kind === MEDIA_VIMEO_VIDEO) {
+      const host = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+      if (!(host === 'vimeo.com' || host.endsWith('.vimeo.com'))) return null;
+      const match = parsed.pathname.match(/(\d+)/);
+      if (!match) return null;
+      return `https://player.vimeo.com/video/${match[1]}`;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+function getRoomFormContext(tour, room = null, error = null) {
+  const currentRoom = room || null;
+  const allRooms = currentRoom
+    ? db.prepare('SELECT * FROM rooms WHERE tour_id = ? AND id != ? ORDER BY name ASC').all(tour.id, currentRoom.id)
+    : [];
+  const hotspots = currentRoom
+    ? db.prepare(`
+      SELECT h.*, r.name AS to_name
+      FROM hotspots h
+      JOIN rooms r ON r.id = h.to_room_id
+      WHERE h.from_room_id = ?
+    `).all(currentRoom.id)
+    : [];
+  const infoPoints = currentRoom
+    ? db.prepare('SELECT * FROM info_points WHERE room_id = ? ORDER BY id ASC').all(currentRoom.id)
+    : [];
+
+  const media_kind = normalizeMediaKind(currentRoom && currentRoom.media_kind, MEDIA_360_IMAGE);
+  const resolvedMediaPath = currentRoom ? (currentRoom.media_path || currentRoom.image_path || null) : null;
+
+  return {
+    title: currentRoom ? `Edit Room — ${currentRoom.name}` : 'New Room',
+    tour,
+    room: currentRoom ? { ...currentRoom, media_kind, media_path: resolvedMediaPath } : null,
+    allRooms,
+    hotspots,
+    infoPoints,
+    error: error || null
+  };
 }
 
 // GET /dashboard/setup
@@ -372,8 +457,24 @@ router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
   for (const room of rooms) {
     const newRoomSlug = uniqueRoomSlug(newTourId, room.name);
     const result = db.prepare(
-      'INSERT INTO rooms (tour_id, name, slug, image_path, initial_pitch, initial_yaw, is_default, sort_order) VALUES (?, ?, ?, NULL, ?, ?, ?, ?)'
-    ).run(newTourId, room.name, newRoomSlug, room.initial_pitch, room.initial_yaw, room.is_default, room.sort_order);
+      `
+      INSERT INTO rooms (
+        tour_id, name, slug, image_path, media_kind, media_path, media_embed_url,
+        initial_pitch, initial_yaw, is_default, sort_order
+      )
+      VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?)
+      `
+    ).run(
+      newTourId,
+      room.name,
+      newRoomSlug,
+      normalizeMediaKind(room.media_kind, MEDIA_360_IMAGE),
+      isExternalVideoKind(room.media_kind) ? (room.media_embed_url || null) : null,
+      room.initial_pitch,
+      room.initial_yaw,
+      room.is_default,
+      room.sort_order
+    );
     roomIdMap[room.id] = result.lastInsertRowid;
   }
 
@@ -389,13 +490,25 @@ router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
     }
   }
 
+  // Duplicate info points for duplicated rooms
+  const infoPoints = db.prepare('SELECT * FROM info_points WHERE room_id IN (SELECT id FROM rooms WHERE tour_id = ?)').all(original.id);
+  for (const ip of infoPoints) {
+    const newRoomId = roomIdMap[ip.room_id];
+    if (newRoomId) {
+      db.prepare(`
+        INSERT INTO info_points (room_id, pitch, yaw, x_percent, y_percent, title, text)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(newRoomId, ip.pitch, ip.yaw, ip.x_percent, ip.y_percent, ip.title, ip.text);
+    }
+  }
+
   res.redirect(`/dashboard/tours/${newTourId}/rooms`);
 });
 
 // DELETE /dashboard/tours/:id
 router.delete('/tours/:id', requireEditor, (req, res) => {
   const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ?').all(req.params.id);
-  for (const room of rooms) unlinkFile(room.image_path);
+  for (const room of rooms) unlinkFile(room.media_path || room.image_path);
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
   if (tour && tour.cover_image_path) unlinkFile(tour.cover_image_path);
   db.prepare('DELETE FROM tours WHERE id = ?').run(req.params.id);
@@ -414,12 +527,12 @@ router.get('/tours/:tourId/rooms', (req, res) => {
 router.get('/tours/:tourId/rooms/new', requireEditor, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
-  res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: null });
+  res.render('dashboard/room-form', getRoomFormContext(tour));
 });
 
 // POST /dashboard/tours/:tourId/rooms
 router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
-  upload.single('image')(req, res, (err) => {
+  upload.single('media_file')(req, res, (err) => {
     const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
     if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
 
@@ -427,17 +540,33 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
       const msg = err.code === 'LIMIT_FILE_SIZE'
         ? 'Image is too large. Maximum size is 100 MB.'
         : (err.message || 'File upload failed.');
-      return res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: msg });
+      return res.render('dashboard/room-form', getRoomFormContext(tour, null, msg));
     }
 
-    const { name, initial_pitch, initial_yaw, is_default } = req.body;
+    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url } = req.body;
     if (!name || !name.trim()) {
       if (req.file) unlinkFile('uploads/' + req.file.filename);
-      return res.render('dashboard/room-form', { title: 'New Room', tour, room: null, allRooms: [], hotspots: [], error: 'Room name is required' });
+      return res.render('dashboard/room-form', getRoomFormContext(tour, null, 'Room name is required'));
+    }
+
+    const mediaKind = normalizeMediaKind(media_kind);
+    let mediaPath = req.file ? 'uploads/' + req.file.filename : null;
+    let mediaEmbedUrl = null;
+    let imagePath = null;
+
+    if (isExternalVideoKind(mediaKind)) {
+      if (req.file) unlinkFile(mediaPath);
+      mediaPath = null;
+      mediaEmbedUrl = normalizeExternalVideoUrl(mediaKind, external_video_url);
+      if (!mediaEmbedUrl) {
+        return res.render('dashboard/room-form', getRoomFormContext(tour, null, 'Please provide a valid YouTube or Vimeo URL.'));
+      }
+    } else {
+      mediaEmbedUrl = null;
+      imagePath = isImageKind(mediaKind) ? mediaPath : null;
     }
 
     const slug = uniqueRoomSlug(tour.id, name.trim());
-    const image_path = req.file ? 'uploads/' + req.file.filename : null;
 
     const existingRooms = db.prepare('SELECT COUNT(*) AS cnt FROM rooms WHERE tour_id = ?').get(tour.id).cnt;
     const setDefault = is_default === 'on' || existingRooms === 0;
@@ -448,8 +577,11 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
 
     const maxOrder = db.prepare('SELECT MAX(sort_order) AS m FROM rooms WHERE tour_id = ?').get(tour.id).m || 0;
 
-    db.prepare('INSERT INTO rooms (tour_id, name, slug, image_path, initial_pitch, initial_yaw, is_default, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(
-      tour.id, name.trim(), slug, image_path,
+    db.prepare(`
+      INSERT INTO rooms (tour_id, name, slug, image_path, media_kind, media_path, media_embed_url, initial_pitch, initial_yaw, is_default, sort_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      tour.id, name.trim(), slug, imagePath, mediaKind, mediaPath, mediaEmbedUrl,
       parseFloat(initial_pitch) || 0,
       parseFloat(initial_yaw) || 0,
       setDefault ? 1 : 0,
@@ -466,57 +598,68 @@ router.get('/tours/:tourId/rooms/:roomId/edit', requireEditor, (req, res) => {
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
   if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
-
-  const allRooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? AND id != ? ORDER BY name ASC').all(tour.id, room.id);
-  const hotspots = db.prepare(`
-    SELECT h.*, r.name AS to_name
-    FROM hotspots h
-    JOIN rooms r ON r.id = h.to_room_id
-    WHERE h.from_room_id = ?
-  `).all(room.id);
-
-  res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: null });
+  res.render('dashboard/room-form', getRoomFormContext(tour, room));
 });
 
 // PUT /dashboard/tours/:tourId/rooms/:roomId
 router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
-  upload.single('image')(req, res, (err) => {
+  upload.single('media_file')(req, res, (err) => {
     const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
     if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
     const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
     if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
 
-    const allRooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ? AND id != ? ORDER BY name ASC').all(tour.id, room.id);
-    const hotspots = db.prepare('SELECT h.*, r.name AS to_name FROM hotspots h JOIN rooms r ON r.id = h.to_room_id WHERE h.from_room_id = ?').all(room.id);
-
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
         ? 'Image is too large. Maximum size is 100 MB.'
         : (err.message || 'File upload failed.');
-      return res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: msg });
+      return res.render('dashboard/room-form', getRoomFormContext(tour, room, msg));
     }
 
-    const { name, initial_pitch, initial_yaw, is_default } = req.body;
+    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url } = req.body;
     if (!name || !name.trim()) {
       if (req.file) unlinkFile('uploads/' + req.file.filename);
-      return res.render('dashboard/room-form', { title: `Edit Room — ${room.name}`, tour, room, allRooms, hotspots, error: 'Room name is required' });
+      return res.render('dashboard/room-form', getRoomFormContext(tour, room, 'Room name is required'));
     }
 
     const slug = uniqueRoomSlug(tour.id, name.trim(), room.id);
-    let image_path = room.image_path;
+    const currentMediaKind = normalizeMediaKind(room.media_kind, MEDIA_360_IMAGE);
+    const mediaKind = normalizeMediaKind(media_kind, currentMediaKind);
+    let mediaPath = room.media_path || room.image_path || null;
+    let mediaEmbedUrl = room.media_embed_url || null;
 
     if (req.file) {
-      unlinkFile(room.image_path);
-      image_path = 'uploads/' + req.file.filename;
+      if (mediaPath) unlinkFile(mediaPath);
+      mediaPath = 'uploads/' + req.file.filename;
     }
+
+    if (isExternalVideoKind(mediaKind)) {
+      if (mediaPath) {
+        unlinkFile(mediaPath);
+        mediaPath = null;
+      }
+      mediaEmbedUrl = normalizeExternalVideoUrl(mediaKind, external_video_url);
+      if (!mediaEmbedUrl) {
+        if (req.file) unlinkFile('uploads/' + req.file.filename);
+        return res.render('dashboard/room-form', getRoomFormContext(tour, room, 'Please provide a valid YouTube or Vimeo URL.'));
+      }
+    } else {
+      mediaEmbedUrl = null;
+    }
+
+    const imagePath = isImageKind(mediaKind) ? mediaPath : null;
 
     const setDefault = is_default === 'on';
     if (setDefault) {
       db.prepare('UPDATE rooms SET is_default = 0 WHERE tour_id = ?').run(tour.id);
     }
 
-    db.prepare('UPDATE rooms SET name = ?, slug = ?, image_path = ?, initial_pitch = ?, initial_yaw = ?, is_default = ? WHERE id = ?').run(
-      name.trim(), slug, image_path,
+    db.prepare(`
+      UPDATE rooms
+      SET name = ?, slug = ?, image_path = ?, media_kind = ?, media_path = ?, media_embed_url = ?, initial_pitch = ?, initial_yaw = ?, is_default = ?
+      WHERE id = ?
+    `).run(
+      name.trim(), slug, imagePath, mediaKind, mediaPath, mediaEmbedUrl,
       parseFloat(initial_pitch) || 0,
       parseFloat(initial_yaw) || 0,
       setDefault ? 1 : (room.is_default || 0),
@@ -534,7 +677,7 @@ router.delete('/tours/:tourId/rooms/:roomId', requireEditor, (req, res) => {
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
   if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
 
-  unlinkFile(room.image_path);
+  unlinkFile(room.media_path || room.image_path);
   db.prepare('DELETE FROM rooms WHERE id = ?').run(room.id);
 
   if (room.is_default) {
@@ -573,6 +716,36 @@ router.post('/tours/:tourId/rooms/:roomId/hotspots', requireEditor, (req, res) =
 
   db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text) VALUES (?, ?, ?, ?, ?)').run(
     room.id, toRoom.id, parseFloat(pitch) || 0, parseFloat(yaw) || 0, text || ''
+  );
+
+  res.redirect(`/dashboard/tours/${tour.id}/rooms/${room.id}/edit`);
+});
+
+// POST /dashboard/tours/:tourId/rooms/:roomId/info-points
+router.post('/tours/:tourId/rooms/:roomId/info-points', requireEditor, (req, res) => {
+  const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
+  if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
+  const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
+  if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
+
+  const { pitch, yaw, x_percent, y_percent, title, text } = req.body;
+  const infoTitle = String(title || '').trim();
+  const infoText = String(text || '').trim();
+  if (!infoTitle && !infoText) {
+    return res.status(400).render('error', { title: 'Error', status: 400, message: 'Info point title or text is required' });
+  }
+
+  db.prepare(`
+    INSERT INTO info_points (room_id, pitch, yaw, x_percent, y_percent, title, text)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    room.id,
+    pitch === '' || pitch == null ? null : parseFloat(pitch),
+    yaw === '' || yaw == null ? null : parseFloat(yaw),
+    x_percent === '' || x_percent == null ? null : parseFloat(x_percent),
+    y_percent === '' || y_percent == null ? null : parseFloat(y_percent),
+    infoTitle,
+    infoText
   );
 
   res.redirect(`/dashboard/tours/${tour.id}/rooms/${room.id}/edit`);
@@ -653,6 +826,56 @@ router.delete('/hotspots/:id', requireEditor, (req, res) => {
 
   db.prepare('DELETE FROM hotspots WHERE id = ?').run(hotspot.id);
   res.redirect(`/dashboard/tours/${hotspot.tour_id}/rooms/${hotspot.room_id}/edit`);
+});
+
+// PUT /dashboard/info-points/:id
+router.put('/info-points/:id', requireEditor, (req, res) => {
+  const infoPoint = db.prepare(`
+    SELECT ip.*, r.tour_id, r.id AS room_id
+    FROM info_points ip
+    JOIN rooms r ON r.id = ip.room_id
+    WHERE ip.id = ?
+  `).get(req.params.id);
+
+  if (!infoPoint) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Info point not found' });
+
+  const { pitch, yaw, x_percent, y_percent, title, text } = req.body;
+  const infoTitle = String(title || '').trim();
+  const infoText = String(text || '').trim();
+  if (!infoTitle && !infoText) {
+    return res.status(400).render('error', { title: 'Error', status: 400, message: 'Info point title or text is required' });
+  }
+
+  db.prepare(`
+    UPDATE info_points
+    SET pitch = ?, yaw = ?, x_percent = ?, y_percent = ?, title = ?, text = ?
+    WHERE id = ?
+  `).run(
+    pitch === '' || pitch == null ? null : parseFloat(pitch),
+    yaw === '' || yaw == null ? null : parseFloat(yaw),
+    x_percent === '' || x_percent == null ? null : parseFloat(x_percent),
+    y_percent === '' || y_percent == null ? null : parseFloat(y_percent),
+    infoTitle,
+    infoText,
+    infoPoint.id
+  );
+
+  res.redirect(`/dashboard/tours/${infoPoint.tour_id}/rooms/${infoPoint.room_id}/edit`);
+});
+
+// DELETE /dashboard/info-points/:id
+router.delete('/info-points/:id', requireEditor, (req, res) => {
+  const infoPoint = db.prepare(`
+    SELECT ip.*, r.tour_id, r.id AS room_id
+    FROM info_points ip
+    JOIN rooms r ON r.id = ip.room_id
+    WHERE ip.id = ?
+  `).get(req.params.id);
+
+  if (!infoPoint) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Info point not found' });
+
+  db.prepare('DELETE FROM info_points WHERE id = ?').run(infoPoint.id);
+  res.redirect(`/dashboard/tours/${infoPoint.tour_id}/rooms/${infoPoint.room_id}/edit`);
 });
 
 module.exports = router;
