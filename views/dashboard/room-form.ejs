@@ -778,8 +778,11 @@
   if (captureIpBtn) {
     captureIpBtn.addEventListener('click', () => {
       if (!infoPointViewer) return;
-      document.getElementById('ip-pitch').value = infoPointViewer.getPitch().toFixed(1);
-      document.getElementById('ip-yaw').value = infoPointViewer.getYaw().toFixed(1);
+      const pitchInput = document.getElementById('ip-pitch');
+      const yawInput = document.getElementById('ip-yaw');
+      if (!pitchInput || !yawInput) return;
+      pitchInput.value = infoPointViewer.getPitch().toFixed(1);
+      yawInput.value = infoPointViewer.getYaw().toFixed(1);
       if (infoPointSection) infoPointSection.style.display = 'none';
     });
   }

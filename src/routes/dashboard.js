@@ -559,6 +559,7 @@ router.post('/tours/import', requireEditor, (req, res) => {
         const roomName = String(sourceRoom.name || '').trim() || `Room ${i + 1}`;
         const mediaKind = normalizeMediaKind(sourceRoom.media_kind, MEDIA_360_IMAGE);
         const roomSlug = uniqueRoomSlug(newTourId, roomName);
+        const parsedSortOrder = Number(sourceRoom.sort_order);
         let mediaPath = null;
         let mediaEmbedUrl = null;
 
@@ -585,7 +586,7 @@ router.post('/tours/import', requireEditor, (req, res) => {
           parseFloat(sourceRoom.initial_pitch) || 0,
           parseFloat(sourceRoom.initial_yaw) || 0,
           sourceRoom.is_default ? 1 : 0,
-          Number.isFinite(Number(sourceRoom.sort_order)) ? Number(sourceRoom.sort_order) : (i + 1)
+          Number.isFinite(parsedSortOrder) ? parsedSortOrder : (i + 1)
         );
 
         roomIdBySourceSlug.set(String(sourceRoom.slug || roomSlug), roomInsert.lastInsertRowid);
