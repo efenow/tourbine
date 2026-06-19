@@ -336,9 +336,20 @@
             </div>
           </div>
           <% if (canUsePannellumPickers) { %>
-          <button type="button" class="btn btn-sm btn-outline-secondary mb-2" id="capture-ip-from-360-btn">
-            <i class="bi bi-crosshair"></i> Use current 360 picker view for Pitch/Yaw
-          </button>
+          <div class="mb-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="toggle-info-point-picker-btn">
+              <i class="bi bi-crosshair"></i> Pick info point from 360 view
+            </button>
+            <div id="info-point-picker-section" style="display:none;" class="mt-2">
+              <div id="pnlm-info-point-picker" class="mb-2"></div>
+              <div class="d-flex align-items-center gap-2">
+                <span class="text-muted small"><i class="bi bi-arrows-move"></i> Aim the crosshair at the info point position</span>
+                <button type="button" class="btn btn-sm btn-success ms-auto" id="capture-ip-from-360-btn">
+                  <i class="bi bi-check-lg"></i> Use crosshair position
+                </button>
+              </div>
+            </div>
+          </div>
           <% } %>
           <% if (canUseStillInfoPicker) { %>
           <div class="mb-2">
@@ -734,13 +745,42 @@
   });
   <% } %>
 
+  let infoPointViewer = null;
+  const infoPointToggleBtn = document.getElementById('toggle-info-point-picker-btn');
+  const infoPointSection = document.getElementById('info-point-picker-section');
   const captureIpBtn = document.getElementById('capture-ip-from-360-btn');
+
+  if (infoPointToggleBtn && infoPointSection) {
+    infoPointToggleBtn.addEventListener('click', () => {
+      if (infoPointSection.style.display === 'none') {
+        infoPointSection.style.display = 'block';
+        if (!infoPointViewer) {
+          infoPointViewer = pannellum.viewer('pnlm-info-point-picker', {
+            type: 'equirectangular',
+            panorama: PANORAMA_URL,
+            pitch: parseFloat(document.getElementById('ip-pitch').value) || INIT_PITCH,
+            yaw: parseFloat(document.getElementById('ip-yaw').value) || INIT_YAW,
+            autoLoad: true,
+            showControls: false,
+            compass: false,
+            mouseZoom: false,
+          });
+          const ch = document.createElement('div');
+          ch.className = 'pick-crosshair';
+          document.getElementById('pnlm-info-point-picker').appendChild(ch);
+        }
+      } else {
+        infoPointSection.style.display = 'none';
+      }
+    });
+  }
+
   if (captureIpBtn) {
     captureIpBtn.addEventListener('click', () => {
-      const sourceViewer = (typeof pickerViewer !== 'undefined' && pickerViewer) || previewViewer;
-      if (!sourceViewer) return;
-      document.getElementById('ip-pitch').value = sourceViewer.getPitch().toFixed(1);
-      document.getElementById('ip-yaw').value = sourceViewer.getYaw().toFixed(1);
+      if (!infoPointViewer) return;
+      document.getElementById('ip-pitch').value = infoPointViewer.getPitch().toFixed(1);
+      document.getElementById('ip-yaw').value = infoPointViewer.getYaw().toFixed(1);
+      if (infoPointSection) infoPointSection.style.display = 'none';
     });
   }
 </script>

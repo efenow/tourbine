@@ -1,7 +1,8 @@
 /* Pannellum mini-viewer used in the room edit form for visual hotspot/view placement */
 
 #pnlm-preview,
-#pnlm-hotspot-picker {
+#pnlm-hotspot-picker,
+#pnlm-info-point-picker {
   height: 320px;
   border-radius: 8px;
   overflow: hidden;
@@ -9,7 +10,8 @@
 }
 
 #pnlm-preview .pnlm-about-msg,
-#pnlm-hotspot-picker .pnlm-about-msg {
+#pnlm-hotspot-picker .pnlm-about-msg,
+#pnlm-info-point-picker .pnlm-about-msg {
   display: none !important;
 }
 

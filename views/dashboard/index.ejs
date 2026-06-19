@@ -8,8 +8,10 @@
       <a href="/dashboard/analytics" class="btn btn-outline-secondary"><i class="bi bi-graph-up"></i> Analytics</a>
       <% if (isAdmin) { %>
         <a href="/dashboard/users" class="btn btn-outline-secondary"><i class="bi bi-people"></i> Users</a>
+        <a href="/dashboard/cloudflared" class="btn btn-outline-secondary"><i class="bi bi-cloud"></i> Cloudflared</a>
       <% } %>
       <% if (canEdit) { %>
+        <a href="/dashboard/tours/import" class="btn btn-outline-secondary"><i class="bi bi-upload"></i> Import Tour</a>
         <a href="/dashboard/tours/new" class="btn btn-primary"><i class="bi bi-plus-lg"></i> New Tour</a>
       <% } %>
     </div>
