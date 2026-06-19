@@ -1,138 +1,141 @@
-# tourbine
+# Tourbine
 
-Self-hosted Open Source 360° web tour software with:
+Tourbine is a self-hosted virtual tour app built with Express, EJS, SQLite, and Pannellum.
 
-- support for multiple rooms
-- support for uploading and viewing Google Camera app Photo Spheres
-- an admin dashboard at `/dashboard`
-- full tour views available at room URLs
-- tour cover images, analytics, and role-based dashboard access
+It provides:
+- public tour pages
+- embed mode for tours
+- an authenticated dashboard
+- multi-user role-based access
+- tour/room/hotspot/info-point management
+- media support for 360 images, still images, local video, YouTube, and Vimeo
+- analytics tracking
+- tour import/export
+- Cloudflared configuration UI
 
----
+## Requirements
 
-## Getting Started
+- Node.js + npm
 
-### Option A — Node.js directly
+## Run locally
 
 ```bash
 npm install
 npm start
 ```
 
-### Option B — Docker (recommended for production)
+Server default: `http://localhost:3000`
+
+## Run tests
 
 ```bash
-docker compose up -d
+npm test
 ```
 
-Open `http://localhost:3000` in your browser. On first visit to `/dashboard`, you will be prompted to create the system admin account.
-
-After setup, you can add additional users and roles from **Dashboard → Users**.
-
----
-
-## 🐳 Docker
-
-The easiest way to run Tourbine in production is with Docker.
-
-### Requirements
-- [Docker](https://docs.docker.com/get-docker/) with Docker Compose
-
-### Quickstart
+## Docker
 
 ```bash
-# Build and start in the background
-docker compose up -d --build
-
-# View logs
-docker compose logs -f
-
-# Stop
-docker compose down
-```
-
-Data (SQLite database and uploaded images) is automatically persisted in Docker named volumes (`tourbine_data` and `tourbine_uploads`), surviving container restarts and upgrades.
-
-### Upgrading
-
-```bash
-docker compose pull   # if using a registry image
 docker compose up -d --build
 ```
 
-## 🌐 Exposing to the Internet via Cloudflare Tunnel
+`docker-compose.yml` maps:
+- `3000:3000`
+- `tourbine_data` volume to `/app/data`
+- `tourbine_uploads` volume to `/app/public/uploads`
 
-[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/) lets you securely expose your Tourbine instance to the internet without opening firewall ports or owning a public IP.
+## First-time setup
 
-### Steps
+1. Open `/dashboard`
+2. Create the system admin account on `/dashboard/setup`
+3. Log in at `/dashboard/login` on later visits
 
-1. **Install cloudflared** on your host machine:
-   - [Download & install](https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/install-and-setup/installation/)
+## Dashboard features
 
-2. **Authenticate** with your Cloudflare account:
-   ```bash
-   cloudflared tunnel login
-   ```
+- **Tours**
+  - create/edit/delete tours
+  - optional cover image upload
+  - duplicate tours (structure data)
+  - import full tour from export JSON
+  - export full tour from room list page
+- **Rooms**
+  - create/edit/delete rooms
+  - reorder rooms
+  - set default room
+  - media type selection:
+    - `360_image`
+    - `still_image`
+    - `local_video`
+    - `youtube_video`
+    - `vimeo_video`
+  - optional privacy editor for image blur/mosaic before upload
+- **Hotspots**
+  - link room-to-room with pitch/yaw
+- **Info points**
+  - 360 pitch/yaw and still-image x/y placement support
+  - title/text metadata
+- **Users** (admin/system_admin)
+  - create users
+  - change roles
+  - reset user passwords
+  - delete users (with role restrictions)
+- **Analytics**
+  - all-time views
+  - 24-hour and 7-day totals
+  - per-tour aggregates
+- **Cloudflared**
+  - dashboard form at `/dashboard/cloudflared`
+  - stores tunnel fields in `settings`
+  - shows generated config preview
 
-3. **Create a tunnel** named `tourbine`:
-   ```bash
-   cloudflared tunnel create tourbine
-   ```
+## Public routes
 
-4. **Configure the tunnel** — copy and edit the example config:
-   ```bash
-   cp cloudflared-config.example.yml ~/.cloudflared/config.yml
-   ```
-   Edit the file to set your tunnel UUID and your (sub)domain.
+- `/` — tour list
+- `/tour/:tourSlug` — full tour page
+- `/tour/:tourSlug/embed` — embed view
 
-5. **Route your domain** to the tunnel:
-   ```bash
-   cloudflared tunnel route dns tourbine your-subdomain.example.com
-   ```
+## JSON API routes
 
-6. **Run the tunnel**:
-   ```bash
-   cloudflared tunnel run tourbine
-   ```
-   Or [install it as a system service](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/local-management/as-a-service/).
+- `GET /api/tours` — list tours with counts and cover
+- `GET /api/tours/:slug` — full tour data, rooms, hotspots, scenes
 
-> **Note:** Tourbine sets `trust proxy` automatically, so session cookies gain the `Secure` flag when requests arrive over HTTPS via the tunnel.
+## Authentication and security (implemented behavior)
 
----
+- session auth via `express-session`
+- CSRF token checks on POST/PUT/PATCH/DELETE
+- dashboard/login route rate limiting
+- dashboard, public tour, and API route-level rate limiting
+- cookie config:
+  - `httpOnly: true`
+  - `sameSite: 'strict'`
+  - `secure` enabled when `NODE_ENV=production`
+- `app.set('trust proxy', 1)` is enabled
 
-## 🔐 Security
+## Password recovery CLI
 
-### Password Reset
-
-If you lose access to the dashboard, use the included CLI tool (works while the server is offline):
+If dashboard access is lost:
 
 ```bash
 node reset-password.js
 ```
 
-You'll be prompted to choose which username to reset.
+This script updates a selected user directly in the SQLite database.
 
-### User Roles
+## Data and storage
 
-Tourbine supports multiple users with roles:
+- SQLite DB: `data/tourbine.db` (or `DB_PATH` if provided)
+- uploaded media: `public/uploads`
 
-- **System Admin** — full access, including user management and admin promotion
-- **Admin** — full access, including user management (cannot promote users to admin)
-- **User** — read-only dashboard access
+## Cloudflare Tunnel notes
 
-Manage roles at **Dashboard → Users**.
+This repository includes `cloudflared-config.example.yml` with an example tunnel config structure.
 
----
+The dashboard Cloudflared page stores:
+- tunnel name
+- tunnel UUID
+- credentials file path
+- hostname
+- service URL
 
-## 📊 Analytics
+## License
 
-Tourbine tracks tour visits and shows totals over the last 24 hours and 7 days. View the dashboard analytics at **Dashboard → Analytics**.
-
----
-
-## 🔌 REST/JSON API
-
-Tourbine exposes a read-only API for headless use:
-
-- `GET /api/tours` — list tours
-- `GET /api/tours/:slug` — tour details, rooms, hotspots, and scene data
+MIT (see `LICENSE`)

@@ -44,7 +44,10 @@ function prompt(rl, question, hidden = false) {
           process.stdout.write('\n');
           resolve(input);
         } else if (ch === '\u007f' || ch === '\b') {
-          if (input.length > 0) { input = input.slice(0, -1); }
+          if (input.length > 0) {
+            input = input.slice(0, -1);
+            process.stdout.write('\b \b');
+          }
         } else {
           input += ch;
           process.stdout.write('•');

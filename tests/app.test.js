@@ -11,6 +11,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const request = require('supertest');
+const fakeImageBuffer = Buffer.from('not-a-real-image-but-valid-for-mimetype-check');
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -240,12 +241,135 @@ describe('Dashboard (authenticated)', () => {
     expect(res.text).toContain('All-time Views');
   });
 
+  test('GET /dashboard/cloudflared returns 200', async () => {
+    const res = await agent.get('/dashboard/cloudflared').expect(200);
+    expect(res.text).toContain('Cloudflared Setup');
+  });
+
+  test('POST /dashboard/cloudflared saves values', async () => {
+    const page = await agent.get('/dashboard/cloudflared').expect(200);
+    const token = csrf(page.text);
+    const res = await agent.post('/dashboard/cloudflared').type('form').send({
+      _csrf: token,
+      tunnel_name: 'tourbine',
+      tunnel_uuid: '6ff42ae2-765d-4d41-8fd4-a1c7c0ad2571',
+      credentials_file: '/home/user/.cloudflared/tourbine.json',
+      hostname: 'tour.example.com',
+      service_url: 'http://localhost:3000'
+    }).expect(200);
+    expect(res.text).toContain('settings saved');
+    expect(res.text).toContain('tour.example.com');
+  });
+
   test('GET /dashboard unauthenticated redirects to login', async () => {
     const bare = request.agent(app);
     // setup is already done so redirects to login not setup
     const res = await bare.get('/dashboard');
     expect([302, 301]).toContain(res.status);
     expect(res.headers.location).toMatch(/login/);
+  });
+
+  describe('Tour import/export', () => {
+    let app, dbPath, agent;
+    let sourceTourId, roomAId, roomBId, exportedJson;
+
+    beforeAll(async () => {
+      ({ app, dbPath } = makeApp());
+      agent = request.agent(app);
+      await doSetup(agent);
+
+      // Create source tour with a cover image
+      const tourPage = await agent.get('/dashboard/tours/new').expect(200);
+      const tourToken = csrf(tourPage.text);
+      await agent.post(`/dashboard/tours?_csrf=${encodeURIComponent(tourToken)}`)
+        .field('_csrf', tourToken)
+        .field('name', 'Export Source')
+        .field('description', 'Tour for export/import tests')
+        .attach('cover_image', fakeImageBuffer, { filename: 'cover.jpg', contentType: 'image/jpeg' })
+        .expect(302);
+
+      const dash = await agent.get('/dashboard').expect(200);
+      sourceTourId = parseInt(dash.text.match(/\/dashboard\/tours\/(\d+)\/edit/)[1], 10);
+
+      // Room A (360 image)
+      const roomAPage = await agent.get(`/dashboard/tours/${sourceTourId}/rooms/new`).expect(200);
+      const roomAToken = csrf(roomAPage.text);
+      await agent.post(`/dashboard/tours/${sourceTourId}/rooms?_csrf=${encodeURIComponent(roomAToken)}`)
+        .field('_csrf', roomAToken)
+        .field('name', 'Room A')
+        .field('media_kind', '360_image')
+        .field('initial_pitch', '1')
+        .field('initial_yaw', '2')
+        .attach('media_file', fakeImageBuffer, { filename: 'room-a.jpg', contentType: 'image/jpeg' })
+        .expect(302);
+
+      // Room B (still image)
+      const roomBPage = await agent.get(`/dashboard/tours/${sourceTourId}/rooms/new`).expect(200);
+      const roomBToken = csrf(roomBPage.text);
+      await agent.post(`/dashboard/tours/${sourceTourId}/rooms?_csrf=${encodeURIComponent(roomBToken)}`)
+        .field('_csrf', roomBToken)
+        .field('name', 'Room B')
+        .field('media_kind', 'still_image')
+        .field('initial_pitch', '0')
+        .field('initial_yaw', '0')
+        .attach('media_file', fakeImageBuffer, { filename: 'room-b.jpg', contentType: 'image/jpeg' })
+        .expect(302);
+
+      const rooms = await agent.get(`/dashboard/tours/${sourceTourId}/rooms`).expect(200);
+      const roomIds = [...rooms.text.matchAll(/\/rooms\/(\d+)\/edit/g)].map((m) => parseInt(m[1], 10));
+      roomAId = roomIds[0];
+      roomBId = roomIds[1];
+
+      const roomAEdit = await agent.get(`/dashboard/tours/${sourceTourId}/rooms/${roomAId}/edit`).expect(200);
+      const roomAToken2 = csrf(roomAEdit.text);
+      await agent.post(`/dashboard/tours/${sourceTourId}/rooms/${roomAId}/hotspots`).type('form').send({
+        _csrf: roomAToken2,
+        to_room_id: String(roomBId),
+        pitch: '5',
+        yaw: '10',
+        text: 'Go to B'
+      }).expect(302);
+      await agent.post(`/dashboard/tours/${sourceTourId}/rooms/${roomAId}/info-points`).type('form').send({
+        _csrf: roomAToken2,
+        pitch: '1.2',
+        yaw: '3.4',
+        title: 'Info A',
+        text: 'Imported info text'
+      }).expect(302);
+    });
+
+    afterAll(() => cleanupDb(dbPath));
+
+    test('GET /dashboard/tours/:id/export returns full export JSON', async () => {
+      const res = await agent.get(`/dashboard/tours/${sourceTourId}/export`).expect(200);
+      expect(res.headers['content-type']).toMatch(/application\/json/);
+      exportedJson = JSON.parse(res.text);
+      expect(exportedJson.format).toBe('tourbine-tour-export-v1');
+      expect(exportedJson.tour.name).toBe('Export Source');
+      expect(exportedJson.tour.cover_image_asset).toBeTruthy();
+      expect(exportedJson.rooms.length).toBe(2);
+      expect(exportedJson.hotspots.length).toBeGreaterThanOrEqual(1);
+      expect(exportedJson.info_points.length).toBeGreaterThanOrEqual(1);
+      expect(exportedJson.rooms.some((room) => room.media_asset && room.media_asset.data_base64)).toBe(true);
+    });
+
+    test('POST /dashboard/tours/import imports full tour payload', async () => {
+      const page = await agent.get('/dashboard/tours/import').expect(200);
+      const token = csrf(page.text);
+      const res = await agent.post(`/dashboard/tours/import?_csrf=${encodeURIComponent(token)}`)
+        .field('_csrf', token)
+        .attach('tour_file', Buffer.from(JSON.stringify(exportedJson)), { filename: 'tour.tourbine.json', contentType: 'application/json' });
+      expect([302, 303]).toContain(res.status);
+
+      const importedRooms = await agent.get(res.headers.location).expect(200);
+      expect(importedRooms.text).toContain('Room A');
+      expect(importedRooms.text).toContain('Room B');
+
+      const importedRoomId = parseInt(importedRooms.text.match(/\/rooms\/(\d+)\/edit/)[1], 10);
+      const importedEdit = await agent.get(`${res.headers.location}/${importedRoomId}/edit`).expect(200);
+      expect(importedEdit.text).toContain('Go to B');
+      expect(importedEdit.text).toContain('Info A');
+    });
   });
 });
 

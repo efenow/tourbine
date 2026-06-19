@@ -1,0 +1,65 @@
+<%- include('../partials/header', { title }) %>
+<main class="container py-5">
+  <nav aria-label="breadcrumb" class="mb-4">
+    <ol class="breadcrumb">
+      <li class="breadcrumb-item"><a href="/dashboard">Dashboard</a></li>
+      <li class="breadcrumb-item active">Cloudflared</li>
+    </ol>
+  </nav>
+
+  <div class="card mx-auto" style="max-width: 900px;">
+    <div class="card-header">
+      <h5 class="mb-0"><i class="bi bi-cloud"></i> Cloudflared Setup</h5>
+    </div>
+    <div class="card-body">
+      <% if (error) { %>
+        <div class="alert alert-danger"><%= error %></div>
+      <% } %>
+      <% if (saved) { %>
+        <div class="alert alert-success">Cloudflared settings saved.</div>
+      <% } %>
+
+      <form method="POST" action="/dashboard/cloudflared">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label" for="tunnel_name">Tunnel Name</label>
+            <input class="form-control" id="tunnel_name" name="tunnel_name" value="<%= config.tunnelName %>" placeholder="tourbine">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="tunnel_uuid">Tunnel UUID</label>
+            <input class="form-control" id="tunnel_uuid" name="tunnel_uuid" value="<%= config.tunnelUuid %>" placeholder="6ff42ae2-765d-4d41-8fd4-a1c7c0ad2571">
+          </div>
+          <div class="col-md-12">
+            <label class="form-label" for="credentials_file">Credentials File Path</label>
+            <input class="form-control" id="credentials_file" name="credentials_file" value="<%= config.credentialsFile %>" placeholder="/home/user/.cloudflared/<uuid>.json">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="hostname">Hostname</label>
+            <input class="form-control" id="hostname" name="hostname" value="<%= config.hostname %>" placeholder="tour.example.com">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label" for="service_url">Local Service URL</label>
+            <input class="form-control" id="service_url" name="service_url" value="<%= config.serviceUrl %>" placeholder="http://localhost:3000">
+          </div>
+        </div>
+
+        <div class="mt-3 d-flex gap-2">
+          <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save</button>
+          <a href="/dashboard" class="btn btn-outline-secondary">Back</a>
+        </div>
+      </form>
+
+      <hr>
+      <h6 class="mb-2">Generated <code>cloudflared</code> config preview</h6>
+      <pre class="bg-light border rounded p-3 mb-0"><code>tunnel: <%= config.tunnelUuid || '&lt;your-tunnel-uuid&gt;' %>
+credentials-file: <%= config.credentialsFile || '/home/&lt;user&gt;/.cloudflared/&lt;your-tunnel-uuid&gt;.json' %>
+
+ingress:
+  - hostname: <%= config.hostname || 'tour.example.com' %>
+    service: <%= config.serviceUrl || 'http://localhost:3000' %>
+  - service: http_status:404</code></pre>
+    </div>
+  </div>
+</main>
+<%- include('../partials/footer', {}) %>
