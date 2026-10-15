@@ -9,7 +9,7 @@
     "test": "jest --runInBand --forceExit"
   },
   "dependencies": {
-    "adm-zip": "^0.5.17",
+    "adm-zip": "^0.6.1",
     "bcrypt": "^6.0.0",
     "better-sqlite3": "^13.0.3",
     "bootstrap": "^5.3.8",
