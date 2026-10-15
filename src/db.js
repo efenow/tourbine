@@ -95,6 +95,10 @@ try { db.exec('ALTER TABLE tours ADD COLUMN cover_image_path TEXT DEFAULT NULL')
 try { db.exec("ALTER TABLE rooms ADD COLUMN media_kind TEXT DEFAULT '360_image'"); } catch (e) {}
 try { db.exec('ALTER TABLE rooms ADD COLUMN media_path TEXT DEFAULT NULL'); } catch (e) {}
 try { db.exec('ALTER TABLE rooms ADD COLUMN media_embed_url TEXT DEFAULT NULL'); } catch (e) {}
+try { db.exec('ALTER TABLE rooms ADD COLUMN auto_rotate INTEGER DEFAULT 0'); } catch (e) {}
+try { db.exec('ALTER TABLE rooms ADD COLUMN auto_rotate_speed REAL DEFAULT 1.0'); } catch (e) {}
+try { db.exec('ALTER TABLE hotspots ADD COLUMN url TEXT DEFAULT NULL'); } catch (e) {}
+try { db.exec('ALTER TABLE hotspots ADD COLUMN is_external INTEGER DEFAULT 0'); } catch (e) {}
 
 // Role migrations for legacy installs
 db.exec(`

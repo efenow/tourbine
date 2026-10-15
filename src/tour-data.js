@@ -5,10 +5,11 @@ const MEDIA_STILL_IMAGE = 'still_image';
 const MEDIA_LOCAL_VIDEO = 'local_video';
 const MEDIA_YOUTUBE_VIDEO = 'youtube_video';
 const MEDIA_VIMEO_VIDEO = 'vimeo_video';
+const MEDIA_EMBED = 'embed';
 
 function normalizeMediaKind(room) {
   const kind = String(room.media_kind || '').trim();
-  if ([MEDIA_360_IMAGE, MEDIA_STILL_IMAGE, MEDIA_LOCAL_VIDEO, MEDIA_YOUTUBE_VIDEO, MEDIA_VIMEO_VIDEO].includes(kind)) return kind;
+  if ([MEDIA_360_IMAGE, MEDIA_STILL_IMAGE, MEDIA_LOCAL_VIDEO, MEDIA_YOUTUBE_VIDEO, MEDIA_VIMEO_VIDEO, MEDIA_EMBED].includes(kind)) return kind;
   return MEDIA_360_IMAGE;
 }
 
@@ -18,7 +19,7 @@ function getLocalMediaPath(room) {
 
 function roomHasRenderableMedia(room) {
   const kind = normalizeMediaKind(room);
-  if (kind === MEDIA_YOUTUBE_VIDEO || kind === MEDIA_VIMEO_VIDEO) {
+  if (kind === MEDIA_YOUTUBE_VIDEO || kind === MEDIA_VIMEO_VIDEO || kind === MEDIA_EMBED) {
     return !!room.media_embed_url;
   }
   return !!getLocalMediaPath(room);
@@ -67,6 +68,8 @@ function buildTourData(tourSlug) {
       media_embed_url: room.media_embed_url || null,
       initial_pitch: room.initial_pitch,
       initial_yaw: room.initial_yaw,
+      auto_rotate: !!room.auto_rotate,
+      auto_rotate_speed: room.auto_rotate_speed || 1.0,
       hotspots: roomHotspots.map(h => ({
         id: h.id,
         to_room_id: h.to_room_id,
@@ -97,6 +100,15 @@ function buildTourData(tourSlug) {
         text: h.text || h.to_name,
         sceneId: 'room-' + h.to_room_id
       }));
+    const externalHotspots = hotspots
+      .filter(h => h.from_room_id === room.id && h.is_external && h.url)
+      .map(h => ({
+        pitch: h.pitch,
+        yaw: h.yaw,
+        type: 'info',
+        text: h.text || 'External Link',
+        URL: h.url
+      }));
     const infoHotspots = roomInfoPoints
       .filter(ip => ip.pitch != null && ip.yaw != null)
       .map(ip => ({
@@ -112,7 +124,7 @@ function buildTourData(tourSlug) {
       panorama: '/' + media_path,
       pitch: room.initial_pitch,
       yaw: room.initial_yaw,
-      hotSpots: [...sceneHotspots, ...infoHotspots]
+      hotSpots: [...sceneHotspots, ...externalHotspots, ...infoHotspots]
     };
   }
 

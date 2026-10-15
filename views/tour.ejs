@@ -19,6 +19,7 @@
       align-items: center;
       justify-content: center;
       overflow: hidden;
+      z-index: 350;
     }
     #flat-viewer img, #flat-viewer video, #flat-viewer iframe {
       max-width: 100%;
@@ -239,6 +240,12 @@
         <button id="autorotate-btn" class="tb-btn" title="Auto-rotate">
           <i class="bi bi-arrow-repeat"></i>
         </button>
+        <button id="zoom-in-btn" class="tb-btn" title="Zoom in">
+          <i class="bi bi-zoom-in"></i>
+        </button>
+        <button id="zoom-out-btn" class="tb-btn" title="Zoom out">
+          <i class="bi bi-zoom-out"></i>
+        </button>
       </div>
 
       <!-- Centre: current room name -->
@@ -276,6 +283,7 @@
           else if (mediaKind === 'local_video') { mediaLabel = 'VIDEO'; mediaIcon = 'bi-film'; }
           else if (mediaKind === 'youtube_video') { mediaLabel = 'YOUTUBE'; mediaIcon = 'bi-youtube'; }
           else if (mediaKind === 'vimeo_video') { mediaLabel = 'VIMEO'; mediaIcon = 'bi-play-btn'; }
+          else if (mediaKind === 'embed') { mediaLabel = 'EMBED'; mediaIcon = 'bi-box-arrow-up-right'; }
         %>
         <div class="room-card <%= hasMedia ? '' : 'no-image' %>"
              data-scene="room-<%= room.id %>"
@@ -355,7 +363,7 @@
           firstScene,
           sceneFadeDuration: 1000,
           autoLoad: true,
-          showControls: true,
+          showControls: false,
           compass: false
         },
         scenes: SCENES
@@ -363,6 +371,25 @@
       viewer.on('scenechange', sceneId => {
         currentRoomId = sceneId;
         setActive(sceneId);
+        // Apply auto-rotate settings for the new scene
+        const room = ROOM_DATA[sceneId];
+        if (room && room.auto_rotate && !autorotating) {
+          autorotating = true;
+          document.getElementById('autorotate-btn').classList.add('active');
+          viewer.startAutoRotate(room.auto_rotate_speed);
+        } else if (room && !room.auto_rotate && autorotating) {
+          autorotating = false;
+          document.getElementById('autorotate-btn').classList.remove('active');
+          viewer.stopAutoRotate();
+        } else if (room && autorotating) {
+          viewer.startAutoRotate(room.auto_rotate_speed);
+        }
+      });
+      // Handle external link hotspots
+      viewer.on('hotspotclick', (hotspot) => {
+        if (hotspot.URL) {
+          window.open(hotspot.URL, '_blank', 'noopener,noreferrer');
+        }
       });
       return viewer;
     }
@@ -409,6 +436,19 @@
         panoramaEl.style.display = 'block';
         const v = ensureViewer(roomKey);
         if (v.getScene() !== roomKey) v.loadScene(roomKey);
+        // Apply auto-rotate settings for this room
+        if (room.auto_rotate && !autorotating) {
+          autorotating = true;
+          document.getElementById('autorotate-btn').classList.add('active');
+          v.startAutoRotate(room.auto_rotate_speed);
+        } else if (!room.auto_rotate && autorotating) {
+          autorotating = false;
+          document.getElementById('autorotate-btn').classList.remove('active');
+          v.stopAutoRotate();
+        } else if (autorotating) {
+          // Update speed if already auto-rotating
+          v.startAutoRotate(room.auto_rotate_speed);
+        }
         return;
       }
 
@@ -446,6 +486,19 @@
         return;
       }
 
+      if (room.media_kind === 'embed' && room.media_embed_url) {
+        const frame = document.createElement('iframe');
+        frame.src = room.media_embed_url;
+        frame.allowFullscreen = true;
+        frame.loading = 'lazy';
+        frame.referrerPolicy = 'strict-origin-when-cross-origin';
+        frame.style.width = '100%';
+        frame.style.height = '100%';
+        frame.style.border = '0';
+        showFlatViewerNode(frame);
+        return;
+      }
+
       const empty = document.createElement('div');
       empty.className = 'text-white-50';
       empty.textContent = 'No media for this room.';
@@ -470,7 +523,9 @@
       if (!viewer || panoramaEl.style.display === 'none') return;
       autorotating = !autorotating;
       document.getElementById('autorotate-btn').classList.toggle('active', autorotating);
-      autorotating ? viewer.startAutoRotate() : viewer.stopAutoRotate();
+      const room = ROOM_DATA[currentRoomId];
+      const speed = room && room.auto_rotate_speed ? room.auto_rotate_speed : 1.0;
+      autorotating ? viewer.startAutoRotate(speed) : viewer.stopAutoRotate();
     });
 
     /* ── Fullscreen ──────────────────────────────── */
@@ -485,6 +540,17 @@
       const inFS = !!document.fullscreenElement;
       fsIcon.className = inFS ? 'bi bi-fullscreen-exit' : 'bi bi-fullscreen';
     });
+
+    /* ── Zoom ──────────────────────────────────── */
+    const zoomInBtn = document.getElementById('zoom-in-btn');
+    const zoomOutBtn = document.getElementById('zoom-out-btn');
+    function adjustZoom(delta) {
+      if (!viewer || panoramaEl.style.display === 'none') return;
+      const hfov = viewer.getHfov();
+      viewer.setHfov(Math.max(10, Math.min(120, hfov + delta)));
+    }
+    zoomInBtn.addEventListener('click', () => adjustZoom(-10));
+    zoomOutBtn.addEventListener('click', () => adjustZoom(10));
 
     /* ── Share (copy URL) ────────────────────────── */
     const shareBtn = document.getElementById('share-btn');

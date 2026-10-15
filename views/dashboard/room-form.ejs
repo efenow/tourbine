@@ -49,6 +49,7 @@
             <option value="local_video" <%= mediaKind === 'local_video' ? 'selected' : '' %>>Local Video</option>
             <option value="youtube_video" <%= mediaKind === 'youtube_video' ? 'selected' : '' %>>YouTube Video</option>
             <option value="vimeo_video" <%= mediaKind === 'vimeo_video' ? 'selected' : '' %>>Vimeo Video</option>
+            <option value="embed" <%= mediaKind === 'embed' ? 'selected' : '' %>>Embed (iframe)</option>
           </select>
         </div>
 
@@ -76,6 +77,14 @@
                  placeholder="https://youtube.com/watch?v=... or https://vimeo.com/..."
                  value="<%= room && room.media_embed_url ? room.media_embed_url : '' %>">
           <div class="form-text">Used for YouTube and Vimeo room types.</div>
+        </div>
+
+        <div class="mb-3" id="embed-video-wrap" style="display:none;">
+          <label for="embed_url" class="form-label">Embed URL</label>
+          <input type="url" id="embed_url" name="embed_url" class="form-control"
+                 placeholder="https://example.com/embed/..."
+                 value="<%= room && room.media_embed_url ? room.media_embed_url : '' %>">
+          <div class="form-text">Full iframe src URL for embedded content (Google Maps, Matterport, etc.).</div>
         </div>
 
         <div class="mb-3" id="privacy-tools-wrap">
@@ -129,6 +138,22 @@
           </div>
         </div>
 
+        <div class="row g-3 mb-2">
+          <div class="col">
+            <label for="auto_rotate_speed" class="form-label">Auto-rotate Speed (°/s)</label>
+            <input type="number" id="auto_rotate_speed" name="auto_rotate_speed" class="form-control"
+                   min="0.1" max="10" step="0.1" value="<%= room ? room.auto_rotate_speed : 1.0 %>">
+            <div class="form-text">Degrees per second (0.1–10)</div>
+          </div>
+          <div class="col">
+            <div class="form-check mt-4">
+              <input type="checkbox" id="auto_rotate" name="auto_rotate" class="form-check-input"
+                     <%= room && room.auto_rotate ? 'checked' : '' %>>
+              <label for="auto_rotate" class="form-check-label">Enable auto-rotate by default</label>
+            </div>
+          </div>
+        </div>
+
         <% if (canUsePannellumPickers) { %>
         <!-- 360° preview for setting initial pitch/yaw -->
         <div class="mb-3">
@@ -178,6 +203,16 @@
                 <div class="d-flex flex-wrap gap-2 align-items-end">
                   <form action="/dashboard/hotspots/<%= hs.id %>?_method=PUT" method="POST" class="row g-2 align-items-end flex-grow-1">
                     <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                    <input type="hidden" name="hotspot_type" value="<%= hs.url ? 'external' : 'room' %>">
+                    <% if (hs.url) { %>
+                    <div class="col-12 col-md-4">
+                      <label class="form-label small">External URL</label>
+                      <input type="url" name="external_url" class="form-control form-control-sm" value="<%= hs.url %>" required>
+                    </div>
+                    <div class="col-12 col-md-3 d-none">
+                      <select name="to_room_id" class="form-select form-select-sm" disabled><option value="">N/A</option></select>
+                    </div>
+                    <% } else { %>
                     <div class="col-12 col-md-3">
                       <label class="form-label small">To Room</label>
                       <select name="to_room_id" class="form-select form-select-sm" required>
@@ -186,6 +221,10 @@
                         <% } %>
                       </select>
                     </div>
+                    <div class="col-12 col-md-4 d-none">
+                      <input type="url" name="external_url" class="form-control form-control-sm" disabled>
+                    </div>
+                    <% } %>
                     <div class="col-6 col-md-2">
                       <label class="form-label small">Pitch</label>
                       <input type="number" name="pitch" class="form-control form-control-sm"
@@ -222,13 +261,28 @@
           <form method="POST" action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>/hotspots" id="add-hotspot-form">
             <input type="hidden" name="_csrf" value="<%= csrfToken %>">
             <div class="mb-2">
-              <label class="form-label small">Link to Room</label>
-              <select name="to_room_id" class="form-select form-select-sm" required>
-                <option value="">Select a room…</option>
-                <% for (const r of allRooms) { %>
-                  <option value="<%= r.id %>"><%= r.name %></option>
-                <% } %>
+              <label class="form-label small">Hotspot Type</label>
+              <select name="hotspot_type" id="hotspot_type" class="form-select form-select-sm" required>
+                <option value="room">Link to Room</option>
+                <option value="external">External Link (URL)</option>
               </select>
+            </div>
+            <div id="hotspot-room-fields">
+              <div class="mb-2">
+                <label class="form-label small">Link to Room</label>
+                <select name="to_room_id" class="form-select form-select-sm" required>
+                  <option value="">Select a room…</option>
+                  <% for (const r of allRooms) { %>
+                    <option value="<%= r.id %>"><%= r.name %></option>
+                  <% } %>
+                </select>
+              </div>
+            </div>
+            <div id="hotspot-external-fields" style="display:none;">
+              <div class="mb-2">
+                <label class="form-label small">External URL</label>
+                <input type="url" name="external_url" class="form-control form-control-sm" placeholder="https://example.com">
+              </div>
             </div>
             <div class="row g-2 mb-2">
               <div class="col">
@@ -258,7 +312,7 @@
             <% } %>
             <div class="mb-2">
               <label class="form-label small">Label (optional)</label>
-              <input type="text" name="text" class="form-control form-control-sm" placeholder="e.g. Go to kitchen">
+              <input type="text" name="text" class="form-control form-control-sm" placeholder="e.g. Go to kitchen or Visit website">
             </div>
             <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Add Hotspot</button>
           </form>
@@ -391,6 +445,7 @@
     const mediaKindSelect = document.getElementById('media_kind');
     const localMediaWrap = document.getElementById('local-media-wrap');
     const externalVideoWrap = document.getElementById('external-video-wrap');
+    const embedVideoWrap = document.getElementById('embed-video-wrap');
     const privacyToolsWrap = document.getElementById('privacy-tools-wrap');
     const imageInput = document.getElementById('image');
 
@@ -398,16 +453,35 @@
       if (!mediaKindSelect) return;
       const kind = mediaKindSelect.value;
       const isExternal = kind === 'youtube_video' || kind === 'vimeo_video';
+      const isEmbed = kind === 'embed';
       const isImageKind = kind === '360_image' || kind === 'still_image';
-      if (localMediaWrap) localMediaWrap.style.display = isExternal ? 'none' : '';
+      const isLocalMedia = !isExternal && !isEmbed;
+      if (localMediaWrap) localMediaWrap.style.display = isLocalMedia ? '' : 'none';
       if (externalVideoWrap) externalVideoWrap.style.display = isExternal ? '' : 'none';
+      if (embedVideoWrap) embedVideoWrap.style.display = isEmbed ? '' : 'none';
       if (privacyToolsWrap) privacyToolsWrap.style.display = isImageKind ? '' : 'none';
-      if (imageInput && isExternal) imageInput.value = '';
+      if (imageInput && (isExternal || isEmbed)) imageInput.value = '';
     }
 
     if (mediaKindSelect) {
       mediaKindSelect.addEventListener('change', updateMediaVisibility);
       updateMediaVisibility();
+    }
+
+    // Hotspot type toggle
+    const hotspotTypeSelect = document.getElementById('hotspot_type');
+    const hotspotRoomFields = document.getElementById('hotspot-room-fields');
+    const hotspotExternalFields = document.getElementById('hotspot-external-fields');
+    if (hotspotTypeSelect && hotspotRoomFields && hotspotExternalFields) {
+      hotspotTypeSelect.addEventListener('change', () => {
+        const isExternal = hotspotTypeSelect.value === 'external';
+        hotspotRoomFields.style.display = isExternal ? 'none' : '';
+        hotspotExternalFields.style.display = isExternal ? '' : 'none';
+        const roomSelect = hotspotRoomFields.querySelector('select[name="to_room_id"]');
+        const urlInput = hotspotExternalFields.querySelector('input[name="external_url"]');
+        if (roomSelect) roomSelect.required = !isExternal;
+        if (urlInput) urlInput.required = isExternal;
+      });
     }
 
     const editorRoot = document.getElementById('privacy-editor-root');
@@ -526,13 +600,45 @@
       tempCtx.clearRect(0, 0, sw, sh);
       tempCtx.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
 
+      // Apply box blur manually for better compatibility
+      const imageData = tempCtx.getImageData(0, 0, sw, sh);
+      const data = imageData.data;
+      const blurred = new Uint8ClampedArray(data.length);
+      const k = blurRadius;
+
+      for (let yy = 0; yy < sh; yy++) {
+        for (let xx = 0; xx < sw; xx++) {
+          let r = 0, g = 0, b = 0, a = 0, count = 0;
+          const yMin = Math.max(0, yy - k);
+          const yMax = Math.min(sh - 1, yy + k);
+          const xMin = Math.max(0, xx - k);
+          const xMax = Math.min(sw - 1, xx + k);
+          for (let y2 = yMin; y2 <= yMax; y2++) {
+            const rowOffset = y2 * sw * 4;
+            for (let x2 = xMin; x2 <= xMax; x2++) {
+              const idx = rowOffset + x2 * 4;
+              r += data[idx];
+              g += data[idx + 1];
+              b += data[idx + 2];
+              a += data[idx + 3];
+              count++;
+            }
+          }
+          const outIdx = (yy * sw + xx) * 4;
+          blurred[outIdx] = r / count;
+          blurred[outIdx + 1] = g / count;
+          blurred[outIdx + 2] = b / count;
+          blurred[outIdx + 3] = a / count;
+        }
+      }
+
+      tempCtx.putImageData(new ImageData(blurred, sw, sh), 0, 0);
+
       ctx.save();
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
       ctx.clip();
-      ctx.filter = `blur(${blurRadius}px)`;
       ctx.drawImage(tempCanvas, sx, sy, sw, sh);
-      ctx.filter = 'none';
       ctx.restore();
     }
 
@@ -547,25 +653,30 @@
       const imageData = ctx.getImageData(sx, sy, sw, sh);
       const data = imageData.data;
 
-      for (let yy = 0; yy < sh; yy += block) {
-        for (let xx = 0; xx < sw; xx += block) {
-          const base = (yy * sw + xx) * 4;
+      // Align mosaic grid to canvas origin (0,0) for consistent pattern while dragging
+      const gridOffsetX = (sx % block + block) % block;
+      const gridOffsetY = (sy % block + block) % block;
+
+      for (let yy = 0; yy < sh; yy += 1) {
+        for (let xx = 0; xx < sw; xx += 1) {
+          // Find the top-left of the block this pixel belongs to (in canvas coordinates)
+          const canvasX = sx + xx;
+          const canvasY = sy + yy;
+          const blockX = canvasX - ((canvasX % block + block) % block);
+          const blockY = canvasY - ((canvasY % block + block) % block);
+          // Source pixel at block origin (relative to sx, sy)
+          const srcX = blockX - sx;
+          const srcY = blockY - sy;
+          const base = (srcY * sw + srcX) * 4;
           const r = data[base];
           const g = data[base + 1];
           const b = data[base + 2];
           const a = data[base + 3];
-          const yMax = Math.min(yy + block, sh);
-          const xMax = Math.min(xx + block, sw);
-
-          for (let y2 = yy; y2 < yMax; y2 += 1) {
-            for (let x2 = xx; x2 < xMax; x2 += 1) {
-              const i = (y2 * sw + x2) * 4;
-              data[i] = r;
-              data[i + 1] = g;
-              data[i + 2] = b;
-              data[i + 3] = a;
-            }
-          }
+          const i = (yy * sw + xx) * 4;
+          data[i] = r;
+          data[i + 1] = g;
+          data[i + 2] = b;
+          data[i + 3] = a;
         }
       }
 

@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const bcrypt = require('bcrypt');
 const rateLimit = require('express-rate-limit');
+const AdmZip = require('adm-zip');
 const db = require('../db');
 const upload = require('../upload');
 const slugify = require('slugify');
@@ -20,7 +21,8 @@ const MEDIA_STILL_IMAGE = 'still_image';
 const MEDIA_LOCAL_VIDEO = 'local_video';
 const MEDIA_YOUTUBE_VIDEO = 'youtube_video';
 const MEDIA_VIMEO_VIDEO = 'vimeo_video';
-const MEDIA_KINDS = [MEDIA_360_IMAGE, MEDIA_STILL_IMAGE, MEDIA_LOCAL_VIDEO, MEDIA_YOUTUBE_VIDEO, MEDIA_VIMEO_VIDEO];
+const MEDIA_EMBED = 'embed';
+const MEDIA_KINDS = [MEDIA_360_IMAGE, MEDIA_STILL_IMAGE, MEDIA_LOCAL_VIDEO, MEDIA_YOUTUBE_VIDEO, MEDIA_VIMEO_VIDEO, MEDIA_EMBED];
 const YOUTUBE_VIDEO_ID_LENGTH = 11;
 const YOUTUBE_ID_PATTERN = new RegExp(`^[a-zA-Z0-9_-]{${YOUTUBE_VIDEO_ID_LENGTH}}$`);
 
@@ -157,6 +159,10 @@ function isImageKind(kind) {
   return kind === MEDIA_360_IMAGE || kind === MEDIA_STILL_IMAGE;
 }
 
+function isEmbedKind(kind) {
+  return kind === MEDIA_EMBED;
+}
+
 function normalizeExternalVideoUrl(kind, input) {
   const raw = String(input || '').trim();
   if (!raw) return null;
@@ -199,7 +205,7 @@ function getRoomFormContext(tour, room = null, error = null) {
     ? db.prepare(`
       SELECT h.*, r.name AS to_name
       FROM hotspots h
-      JOIN rooms r ON r.id = h.to_room_id
+      LEFT JOIN rooms r ON r.id = h.to_room_id
       WHERE h.from_room_id = ?
     `).all(currentRoom.id)
     : [];
@@ -512,17 +518,49 @@ router.post('/tours/import', requireEditor, (req, res) => {
       return res.render('dashboard/tour-import', { title: 'Import Tour', error: message });
     }
     if (!req.file || !req.file.buffer) {
-      return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'Please select an export JSON file.' });
+      return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'Please select an export file (ZIP or JSON).' });
     }
 
     let payload;
+    const createdFiles = [];
+
     try {
-      payload = JSON.parse(req.file.buffer.toString('utf8'));
+      const fileName = req.file.originalname || '';
+      const isZip = fileName.toLowerCase().endsWith('.zip');
+      
+      if (isZip) {
+        // Parse ZIP file
+        const zip = new AdmZip(req.file.buffer);
+        const jsonEntry = zip.getEntry('tour.json');
+        if (!jsonEntry) {
+          return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'ZIP file is missing tour.json.' });
+        }
+        const jsonContent = jsonEntry.getData().toString('utf8');
+        payload = JSON.parse(jsonContent);
+
+        // Extract media files to a temporary map
+        const mediaFiles = new Map();
+        zip.getEntries().forEach(entry => {
+          if (entry.entryName.startsWith('media/') && !entry.isDirectory) {
+            const base64 = entry.getData().toString('base64');
+            mediaFiles.set(entry.entryName, base64);
+          }
+        });
+
+        // Store media files map for later use
+        payload._mediaFiles = mediaFiles;
+      } else {
+        // Legacy JSON format
+        payload = JSON.parse(req.file.buffer.toString('utf8'));
+        payload._mediaFiles = new Map();
+      }
     } catch (parseError) {
-      return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'Invalid JSON file.' });
+      return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'Invalid export file.' });
     }
 
-    if (!payload || payload.format !== 'tourbine-tour-export-v1' || !payload.tour || !Array.isArray(payload.rooms)) {
+    // Support both v1 (JSON) and v2 (ZIP) formats
+    const supportedFormats = ['tourbine-tour-export-v1', 'tourbine-tour-export-v2'];
+    if (!payload || !supportedFormats.includes(payload.format) || !payload.tour || !Array.isArray(payload.rooms)) {
       return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'Unsupported export format.' });
     }
 
@@ -530,20 +568,47 @@ router.post('/tours/import', requireEditor, (req, res) => {
     const sourceRooms = payload.rooms;
     const sourceHotspots = Array.isArray(payload.hotspots) ? payload.hotspots : [];
     const sourceInfoPoints = Array.isArray(payload.info_points) ? payload.info_points : [];
+    const mediaFiles = payload._mediaFiles || new Map();
     const tourName = String(sourceTour.name || '').trim();
     if (!tourName) {
       return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'Export is missing a tour name.' });
     }
 
-    const createdFiles = [];
+    function writeMediaAsset(asset, fallbackName) {
+      if (!asset || typeof asset !== 'object') return null;
+      let base64 = asset.data_base64;
+      let ext = path.extname(asset.filename || asset.path || fallbackName || '').toLowerCase();
+      if (!ext && base64) {
+        // Try to detect from base64 header
+        if (base64.startsWith('/9j/')) ext = '.jpg';
+        else if (base64.startsWith('iVBORw0KGgo')) ext = '.png';
+        else if (base64.startsWith('UklGR')) ext = '.webp';
+        else if (base64.startsWith('AAAAIGZ0eXA')) ext = '.mp4';
+        else ext = '.bin';
+      }
+      const allowedExt = ['.jpg', '.jpeg', '.png', '.webp', '.mp4', '.webm', '.ogg', '.mov'];
+      if (!allowedExt.includes(ext)) return null;
+      if (!base64 || !base64.length) return null;
+      const buffer = Buffer.from(base64, 'base64');
+      if (!buffer.length) return null;
+      const filename = `${crypto.randomBytes(12).toString('hex')}${ext}`;
+      const absolutePath = path.join(uploadsDir, filename);
+      fs.writeFileSync(absolutePath, buffer);
+      return `uploads/${filename}`;
+    }
 
     try {
       const newTourSlug = uniqueTourSlug(tourName);
       let coverImagePath = null;
-      if (sourceTour.cover_image_asset) {
-        coverImagePath = writeImportedUploadAsset(sourceTour.cover_image_asset);
-        if (coverImagePath) createdFiles.push(coverImagePath);
+      
+      // Try cover from mediaFiles (ZIP) first, then from asset (JSON)
+      const coverMediaKey = Object.keys(mediaFiles).find(k => k.startsWith('media/cover'));
+      if (coverMediaKey) {
+        coverImagePath = writeMediaAsset({ data_base64: mediaFiles.get(coverMediaKey), filename: coverMediaKey }, 'cover');
+      } else if (sourceTour.cover_image_asset) {
+        coverImagePath = writeMediaAsset(sourceTour.cover_image_asset, 'cover');
       }
+      if (coverImagePath) createdFiles.push(coverImagePath);
 
       const result = db.prepare('INSERT INTO tours (name, slug, description, cover_image_path) VALUES (?, ?, ?, ?)').run(
         tourName,
@@ -565,16 +630,25 @@ router.post('/tours/import', requireEditor, (req, res) => {
 
         if (isExternalVideoKind(mediaKind)) {
           mediaEmbedUrl = normalizeExternalVideoUrl(mediaKind, sourceRoom.media_embed_url) || null;
-        } else if (sourceRoom.media_asset) {
-          mediaPath = writeImportedUploadAsset(sourceRoom.media_asset);
+        } else if (isEmbedKind(mediaKind)) {
+          mediaEmbedUrl = String(sourceRoom.media_embed_url || '').trim();
+        } else {
+          // Local media - try ZIP first, then JSON asset
+          const mediaKey = `media/rooms/${sourceRoom.slug}`;
+          const mediaKeyWithExt = Object.keys(mediaFiles).find(k => k.startsWith(mediaKey));
+          if (mediaKeyWithExt) {
+            mediaPath = writeMediaAsset({ data_base64: mediaFiles.get(mediaKeyWithExt), filename: mediaKeyWithExt }, sourceRoom.slug);
+          } else if (sourceRoom.media_asset) {
+            mediaPath = writeMediaAsset(sourceRoom.media_asset, sourceRoom.slug);
+          }
           if (mediaPath) createdFiles.push(mediaPath);
         }
 
         const imagePath = isImageKind(mediaKind) ? mediaPath : null;
 
         const roomInsert = db.prepare(`
-          INSERT INTO rooms (tour_id, name, slug, image_path, media_kind, media_path, media_embed_url, initial_pitch, initial_yaw, is_default, sort_order)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO rooms (tour_id, name, slug, image_path, media_kind, media_path, media_embed_url, initial_pitch, initial_yaw, is_default, sort_order, auto_rotate, auto_rotate_speed)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           newTourId,
           roomName,
@@ -586,7 +660,9 @@ router.post('/tours/import', requireEditor, (req, res) => {
           parseFloat(sourceRoom.initial_pitch) || 0,
           parseFloat(sourceRoom.initial_yaw) || 0,
           sourceRoom.is_default ? 1 : 0,
-          Number.isFinite(parsedSortOrder) ? parsedSortOrder : (i + 1)
+          Number.isFinite(parsedSortOrder) ? parsedSortOrder : (i + 1),
+          sourceRoom.auto_rotate ? 1 : 0,
+          parseFloat(sourceRoom.auto_rotate_speed) || 1.0
         );
 
         roomIdBySourceSlug.set(String(sourceRoom.slug || roomSlug), roomInsert.lastInsertRowid);
@@ -595,14 +671,31 @@ router.post('/tours/import', requireEditor, (req, res) => {
       for (const hs of sourceHotspots) {
         const fromId = roomIdBySourceSlug.get(String(hs.from_room_slug || ''));
         const toId = roomIdBySourceSlug.get(String(hs.to_room_slug || ''));
-        if (!fromId || !toId || fromId === toId) continue;
-        db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text) VALUES (?, ?, ?, ?, ?)').run(
-          fromId,
-          toId,
-          parseFloat(hs.pitch) || 0,
-          parseFloat(hs.yaw) || 0,
-          String(hs.text || '')
-        );
+        if (!fromId || (hs.is_external && hs.url) || (!hs.is_external && toId && fromId !== toId)) {
+          if (hs.is_external && hs.url) {
+            // External link hotspot
+            db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+              fromId,
+              null,
+              parseFloat(hs.pitch) || 0,
+              parseFloat(hs.yaw) || 0,
+              String(hs.text || ''),
+              hs.url,
+              1
+            );
+          } else if (toId && fromId !== toId) {
+            // Room-to-room hotspot
+            db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+              fromId,
+              toId,
+              parseFloat(hs.pitch) || 0,
+              parseFloat(hs.yaw) || 0,
+              String(hs.text || ''),
+              null,
+              0
+            );
+          }
+        }
       }
 
       for (const ip of sourceInfoPoints) {
@@ -702,24 +795,33 @@ router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
 
   for (const room of rooms) {
     const newRoomSlug = uniqueRoomSlug(newTourId, room.name);
+    const mediaKind = normalizeMediaKind(room.media_kind, MEDIA_360_IMAGE);
+    let mediaEmbedUrl = null;
+    if (isExternalVideoKind(mediaKind)) {
+      mediaEmbedUrl = room.media_embed_url || null;
+    } else if (isEmbedKind(mediaKind)) {
+      mediaEmbedUrl = room.media_embed_url || null;
+    }
     const result = db.prepare(
       `
       INSERT INTO rooms (
         tour_id, name, slug, image_path, media_kind, media_path, media_embed_url,
-        initial_pitch, initial_yaw, is_default, sort_order
+        initial_pitch, initial_yaw, is_default, sort_order, auto_rotate, auto_rotate_speed
       )
-      VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
       `
     ).run(
       newTourId,
       room.name,
       newRoomSlug,
-      normalizeMediaKind(room.media_kind, MEDIA_360_IMAGE),
-      isExternalVideoKind(room.media_kind) ? (room.media_embed_url || null) : null,
+      mediaKind,
+      mediaEmbedUrl,
       room.initial_pitch,
       room.initial_yaw,
       room.is_default,
-      room.sort_order
+      room.sort_order,
+      room.auto_rotate ? 1 : 0,
+      room.auto_rotate_speed || 1.0
     );
     roomIdMap[room.id] = result.lastInsertRowid;
   }
@@ -729,9 +831,17 @@ router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
   for (const hs of hotspots) {
     const newFromId = roomIdMap[hs.from_room_id];
     const newToId = roomIdMap[hs.to_room_id];
-    if (newFromId && newToId) {
-      db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text) VALUES (?, ?, ?, ?, ?)').run(
-        newFromId, newToId, hs.pitch, hs.yaw, hs.text
+    if (hs.is_external && hs.url) {
+      // External link hotspot
+      if (newFromId) {
+        db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+          newFromId, null, hs.pitch, hs.yaw, hs.text, hs.url, 1
+        );
+      }
+    } else if (newFromId && newToId) {
+      // Room-to-room hotspot
+      db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+        newFromId, newToId, hs.pitch, hs.yaw, hs.text, null, 0
       );
     }
   }
@@ -773,7 +883,7 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
   `).all(tour.id);
 
   const payload = {
-    format: 'tourbine-tour-export-v1',
+    format: 'tourbine-tour-export-v2',
     exported_at: new Date().toISOString(),
     tour: {
       name: tour.name,
@@ -788,6 +898,8 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
       media_embed_url: room.media_embed_url || null,
       initial_pitch: room.initial_pitch,
       initial_yaw: room.initial_yaw,
+      auto_rotate: !!room.auto_rotate,
+      auto_rotate_speed: room.auto_rotate_speed || 1.0,
       is_default: !!room.is_default,
       sort_order: room.sort_order,
       media_asset: readStoredUploadAsset(room.media_path || room.image_path)
@@ -797,7 +909,9 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
       to_room_slug: hs.to_slug,
       pitch: hs.pitch,
       yaw: hs.yaw,
-      text: hs.text || ''
+      text: hs.text || '',
+      url: hs.url || null,
+      is_external: !!hs.is_external
     })),
     info_points: infoPoints.map((ip) => ({
       room_slug: ip.room_slug,
@@ -810,10 +924,37 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
     }))
   };
 
+  // Create zip file
+  const zip = new AdmZip();
+  const jsonContent = JSON.stringify(payload, null, 2);
+  zip.addFile('tour.json', Buffer.from(jsonContent, 'utf8'));
+
+  // Add cover image if exists
+  if (tour.cover_image_path) {
+    const coverAsset = readStoredUploadAsset(tour.cover_image_path);
+    if (coverAsset) {
+      const ext = path.extname(tour.cover_image_path).toLowerCase();
+      zip.addFile(`media/cover${ext}`, Buffer.from(coverAsset.data_base64, 'base64'));
+    }
+  }
+
+  // Add room media files
+  for (const room of rooms) {
+    const mediaPath = room.media_path || room.image_path;
+    if (mediaPath && (room.media_kind === '360_image' || room.media_kind === 'still_image' || room.media_kind === 'local_video')) {
+      const asset = readStoredUploadAsset(mediaPath);
+      if (asset) {
+        const ext = path.extname(mediaPath).toLowerCase();
+        zip.addFile(`media/rooms/${room.slug}${ext}`, Buffer.from(asset.data_base64, 'base64'));
+      }
+    }
+  }
+
+  const zipBuffer = zip.toBuffer();
   const safeSlug = makeSlug(tour.slug || tour.name || 'tour');
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="${safeSlug || 'tour'}.tourbine.json"`);
-  return res.send(JSON.stringify(payload, null, 2));
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${safeSlug || 'tour'}.tourbine.zip"`);
+  return res.send(zipBuffer);
 });
 
 // DELETE /dashboard/tours/:id
@@ -854,7 +995,7 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
       return res.render('dashboard/room-form', getRoomFormContext(tour, null, msg));
     }
 
-    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url } = req.body;
+    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url, embed_url, auto_rotate, auto_rotate_speed } = req.body;
     if (!name || !name.trim()) {
       if (req.file) unlinkFile('uploads/' + req.file.filename);
       return res.render('dashboard/room-form', getRoomFormContext(tour, null, 'Room name is required'));
@@ -871,6 +1012,13 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
       mediaEmbedUrl = normalizeExternalVideoUrl(mediaKind, external_video_url);
       if (!mediaEmbedUrl) {
         return res.render('dashboard/room-form', getRoomFormContext(tour, null, 'Please provide a valid YouTube or Vimeo URL.'));
+      }
+    } else if (isEmbedKind(mediaKind)) {
+      if (req.file) unlinkFile(mediaPath);
+      mediaPath = null;
+      mediaEmbedUrl = String(embed_url || '').trim();
+      if (!mediaEmbedUrl) {
+        return res.render('dashboard/room-form', getRoomFormContext(tour, null, 'Please provide an embed URL.'));
       }
     } else {
       mediaEmbedUrl = null;
@@ -889,14 +1037,16 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
     const maxOrder = db.prepare('SELECT MAX(sort_order) AS m FROM rooms WHERE tour_id = ?').get(tour.id).m || 0;
 
     db.prepare(`
-      INSERT INTO rooms (tour_id, name, slug, image_path, media_kind, media_path, media_embed_url, initial_pitch, initial_yaw, is_default, sort_order)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO rooms (tour_id, name, slug, image_path, media_kind, media_path, media_embed_url, initial_pitch, initial_yaw, is_default, sort_order, auto_rotate, auto_rotate_speed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       tour.id, name.trim(), slug, imagePath, mediaKind, mediaPath, mediaEmbedUrl,
       parseFloat(initial_pitch) || 0,
       parseFloat(initial_yaw) || 0,
       setDefault ? 1 : 0,
-      maxOrder + 1
+      maxOrder + 1,
+      auto_rotate === 'on' ? 1 : 0,
+      parseFloat(auto_rotate_speed) || 1.0
     );
 
     res.redirect(`/dashboard/tours/${tour.id}/rooms`);
@@ -927,7 +1077,7 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
       return res.render('dashboard/room-form', getRoomFormContext(tour, room, msg));
     }
 
-    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url } = req.body;
+    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url, embed_url, auto_rotate, auto_rotate_speed } = req.body;
     if (!name || !name.trim()) {
       if (req.file) unlinkFile('uploads/' + req.file.filename);
       return res.render('dashboard/room-form', getRoomFormContext(tour, room, 'Room name is required'));
@@ -954,6 +1104,16 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
         if (req.file) unlinkFile('uploads/' + req.file.filename);
         return res.render('dashboard/room-form', getRoomFormContext(tour, room, 'Please provide a valid YouTube or Vimeo URL.'));
       }
+    } else if (isEmbedKind(mediaKind)) {
+      if (mediaPath) {
+        unlinkFile(mediaPath);
+        mediaPath = null;
+      }
+      mediaEmbedUrl = String(embed_url || '').trim();
+      if (!mediaEmbedUrl) {
+        if (req.file) unlinkFile('uploads/' + req.file.filename);
+        return res.render('dashboard/room-form', getRoomFormContext(tour, room, 'Please provide an embed URL.'));
+      }
     } else {
       mediaEmbedUrl = null;
     }
@@ -967,13 +1127,15 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
 
     db.prepare(`
       UPDATE rooms
-      SET name = ?, slug = ?, image_path = ?, media_kind = ?, media_path = ?, media_embed_url = ?, initial_pitch = ?, initial_yaw = ?, is_default = ?
+      SET name = ?, slug = ?, image_path = ?, media_kind = ?, media_path = ?, media_embed_url = ?, initial_pitch = ?, initial_yaw = ?, is_default = ?, auto_rotate = ?, auto_rotate_speed = ?
       WHERE id = ?
     `).run(
       name.trim(), slug, imagePath, mediaKind, mediaPath, mediaEmbedUrl,
       parseFloat(initial_pitch) || 0,
       parseFloat(initial_yaw) || 0,
       setDefault ? 1 : (room.is_default || 0),
+      auto_rotate === 'on' ? 1 : 0,
+      parseFloat(auto_rotate_speed) || 1.0,
       room.id
     );
 
@@ -1019,15 +1181,24 @@ router.post('/tours/:tourId/rooms/:roomId/hotspots', requireEditor, (req, res) =
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
   if (!room) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Room not found' });
 
-  const { to_room_id, pitch, yaw, text } = req.body;
+  const { hotspot_type, to_room_id, external_url, pitch, yaw, text } = req.body;
 
-  const toRoom = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(to_room_id, tour.id);
-  if (!toRoom) return res.status(400).render('error', { title: 'Error', status: 400, message: 'Invalid target room' });
-  if (toRoom.id === room.id) return res.status(400).render('error', { title: 'Error', status: 400, message: 'A hotspot cannot link a room to itself' });
+  if (hotspot_type === 'external') {
+    if (!external_url || !external_url.trim()) {
+      return res.status(400).render('error', { title: 'Error', status: 400, message: 'External URL is required' });
+    }
+    db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      room.id, null, parseFloat(pitch) || 0, parseFloat(yaw) || 0, text || '', external_url.trim(), 1
+    );
+  } else {
+    const toRoom = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(to_room_id, tour.id);
+    if (!toRoom) return res.status(400).render('error', { title: 'Error', status: 400, message: 'Invalid target room' });
+    if (toRoom.id === room.id) return res.status(400).render('error', { title: 'Error', status: 400, message: 'A hotspot cannot link a room to itself' });
 
-  db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text) VALUES (?, ?, ?, ?, ?)').run(
-    room.id, toRoom.id, parseFloat(pitch) || 0, parseFloat(yaw) || 0, text || ''
-  );
+    db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      room.id, toRoom.id, parseFloat(pitch) || 0, parseFloat(yaw) || 0, text || '', null, 0
+    );
+  }
 
   res.redirect(`/dashboard/tours/${tour.id}/rooms/${room.id}/edit`);
 });
@@ -1107,19 +1278,32 @@ router.put('/hotspots/:id', requireEditor, (req, res) => {
 
   if (!hotspot) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Hotspot not found' });
 
-  const { to_room_id, pitch, yaw, text } = req.body;
-  const toRoom = db.prepare('SELECT id FROM rooms WHERE id = ? AND tour_id = ?').get(to_room_id, hotspot.tour_id);
-  if (!toRoom || toRoom.id === hotspot.room_id) {
-    return res.status(400).render('error', { title: 'Error', status: 400, message: 'Invalid target room' });
-  }
+  const { hotspot_type, to_room_id, external_url, pitch, yaw, text } = req.body;
 
-  db.prepare('UPDATE hotspots SET to_room_id = ?, pitch = ?, yaw = ?, text = ? WHERE id = ?').run(
-    toRoom.id,
-    parseFloat(pitch) || 0,
-    parseFloat(yaw) || 0,
-    text || '',
-    hotspot.id
-  );
+  if (hotspot_type === 'external') {
+    if (!external_url || !external_url.trim()) {
+      return res.status(400).render('error', { title: 'Error', status: 400, message: 'External URL is required' });
+    }
+    db.prepare('UPDATE hotspots SET to_room_id = NULL, pitch = ?, yaw = ?, text = ?, url = ?, is_external = 1 WHERE id = ?').run(
+      parseFloat(pitch) || 0,
+      parseFloat(yaw) || 0,
+      text || '',
+      external_url.trim(),
+      hotspot.id
+    );
+  } else {
+    const toRoom = db.prepare('SELECT id FROM rooms WHERE id = ? AND tour_id = ?').get(to_room_id, hotspot.tour_id);
+    if (!toRoom || toRoom.id === hotspot.room_id) {
+      return res.status(400).render('error', { title: 'Error', status: 400, message: 'Invalid target room' });
+    }
+    db.prepare('UPDATE hotspots SET to_room_id = ?, pitch = ?, yaw = ?, text = ?, url = NULL, is_external = 0 WHERE id = ?').run(
+      toRoom.id,
+      parseFloat(pitch) || 0,
+      parseFloat(yaw) || 0,
+      text || '',
+      hotspot.id
+    );
+  }
 
   res.redirect(`/dashboard/tours/${hotspot.tour_id}/rooms/${hotspot.room_id}/edit`);
 });

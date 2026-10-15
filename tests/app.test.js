@@ -340,25 +340,58 @@ describe('Dashboard (authenticated)', () => {
 
     afterAll(() => cleanupDb(dbPath));
 
-    test('GET /dashboard/tours/:id/export returns full export JSON', async () => {
-      const res = await agent.get(`/dashboard/tours/${sourceTourId}/export`).expect(200);
-      expect(res.headers['content-type']).toMatch(/application\/json/);
-      exportedJson = JSON.parse(res.text);
-      expect(exportedJson.format).toBe('tourbine-tour-export-v1');
+    test('GET /dashboard/tours/:id/export returns full export ZIP', async () => {
+      // Use custom parser to get raw binary response
+      const res = await agent
+        .get(`/dashboard/tours/${sourceTourId}/export`)
+        .parse((res, cb) => {
+          const chunks = [];
+          res.on('data', chunk => chunks.push(chunk));
+          res.on('end', () => cb(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      expect(res.headers['content-type']).toMatch(/application\/zip/);
+      const AdmZip = require('adm-zip');
+      const zip = new AdmZip(res.body);
+      const jsonEntry = zip.getEntry('tour.json');
+      expect(jsonEntry).toBeTruthy();
+      exportedJson = JSON.parse(jsonEntry.getData().toString('utf8'));
+      expect(exportedJson.format).toBe('tourbine-tour-export-v2');
       expect(exportedJson.tour.name).toBe('Export Source');
       expect(exportedJson.tour.cover_image_asset).toBeTruthy();
       expect(exportedJson.rooms.length).toBe(2);
       expect(exportedJson.hotspots.length).toBeGreaterThanOrEqual(1);
       expect(exportedJson.info_points.length).toBeGreaterThanOrEqual(1);
       expect(exportedJson.rooms.some((room) => room.media_asset && room.media_asset.data_base64)).toBe(true);
+      // Check media files are included
+      expect(zip.getEntry('media/cover.jpg') || zip.getEntry('media/cover.jpeg') || zip.getEntry('media/cover.png')).toBeTruthy();
+      expect(zip.getEntry('media/rooms/room-a.jpg') || zip.getEntry('media/rooms/room-a.jpeg') || zip.getEntry('media/rooms/room-a.png')).toBeTruthy();
+      expect(zip.getEntry('media/rooms/room-b.jpg') || zip.getEntry('media/rooms/room-b.jpeg') || zip.getEntry('media/rooms/room-b.png')).toBeTruthy();
     });
 
-    test('POST /dashboard/tours/import imports full tour payload', async () => {
+    test('POST /dashboard/tours/import imports full tour payload from ZIP', async () => {
       const page = await agent.get('/dashboard/tours/import').expect(200);
       const token = csrf(page.text);
+      // Create a zip in memory using adm-zip from the exported JSON
+      const AdmZip = require('adm-zip');
+      const zip = new AdmZip();
+      zip.addFile('tour.json', Buffer.from(JSON.stringify(exportedJson), 'utf8'));
+      const zipBuffer = zip.toBuffer();
+      
+      // Write to temp file for supertest attach
+      const fs = require('fs');
+      const os = require('os');
+      const path = require('path');
+      const tempZipPath = path.join(os.tmpdir(), `test-import-${Date.now()}.zip`);
+      fs.writeFileSync(tempZipPath, zipBuffer);
+      
       const res = await agent.post(`/dashboard/tours/import?_csrf=${encodeURIComponent(token)}`)
         .field('_csrf', token)
-        .attach('tour_file', Buffer.from(JSON.stringify(exportedJson)), { filename: 'tour.tourbine.json', contentType: 'application/json' });
+        .attach('tour_file', tempZipPath);
+      
+      // Clean up temp file
+      try { fs.unlinkSync(tempZipPath); } catch (_) {}
+      
       expect([302, 303]).toContain(res.status);
 
       const importedRooms = await agent.get(res.headers.location).expect(200);
