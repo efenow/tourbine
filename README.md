@@ -81,8 +81,8 @@ and sets `NODE_ENV=production` and `PORT=3000`.
 - create/edit/delete tours
 - optional cover image upload (max 100 MB)
 - duplicate tours (structure data; images are not copied)
-- import full tour from export ZIP/JSON
-- export full tour from the room list page
+- export full tour as a ZIP from the room list page
+- import full tour from an export ZIP (v2) or legacy JSON (v1)
 
 ### Rooms
 
