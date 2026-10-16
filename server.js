@@ -20,6 +20,12 @@ app.use(express.urlencoded({ extended: true }));
 app.use(methodOverride('_method'));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Security headers: prevent MIME sniffing on served assets (incl. user uploads)
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  next();
+});
+
 // Ensure a random session secret is persisted in the DB
 function getOrCreateSessionSecret() {
   const row = db.prepare("SELECT value FROM settings WHERE key = 'session_secret'").get();

@@ -196,6 +196,19 @@ function normalizeExternalVideoUrl(kind, input) {
   return null;
 }
 
+function normalizeEmbedUrl(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') return null;
+    return raw;
+  } catch (e) {
+    return null;
+  }
+}
+
 function getRoomFormContext(tour, room = null, error = null) {
   const currentRoom = room || null;
   const allRooms = currentRoom
@@ -1016,9 +1029,9 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
     } else if (isEmbedKind(mediaKind)) {
       if (req.file) unlinkFile(mediaPath);
       mediaPath = null;
-      mediaEmbedUrl = String(embed_url || '').trim();
+      mediaEmbedUrl = normalizeEmbedUrl(embed_url);
       if (!mediaEmbedUrl) {
-        return res.render('dashboard/room-form', getRoomFormContext(tour, null, 'Please provide an embed URL.'));
+        return res.render('dashboard/room-form', getRoomFormContext(tour, null, 'Please provide a valid http/https embed URL.'));
       }
     } else {
       mediaEmbedUrl = null;
@@ -1110,10 +1123,10 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
         unlinkFile(mediaPath);
         mediaPath = null;
       }
-      mediaEmbedUrl = String(embed_url || '').trim();
+      mediaEmbedUrl = normalizeEmbedUrl(embed_url);
       if (!mediaEmbedUrl) {
         if (req.file) unlinkFile('uploads/' + req.file.filename);
-        return res.render('dashboard/room-form', getRoomFormContext(tour, room, 'Please provide an embed URL.'));
+        return res.render('dashboard/room-form', getRoomFormContext(tour, room, 'Please provide a valid http/https embed URL.'));
       }
     } else {
       mediaEmbedUrl = null;

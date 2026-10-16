@@ -90,7 +90,7 @@
                         <button type="submit" class="btn btn-outline-secondary btn-sm"><i class="bi bi-copy"></i> Duplicate</button>
                       </form>
                       <form action="/dashboard/tours/<%= tour.id %>?_method=DELETE" method="POST" class="d-inline"
-                            onsubmit="return confirm('Delete tour &quot;<%= tour.name %>&quot;? This cannot be undone.')">
+                            data-confirm="Delete tour &quot;<%= tour.name %>&quot;? This cannot be undone.">
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                         <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
                       </form>

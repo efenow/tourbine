@@ -101,7 +101,7 @@
               </td>
               <td>
                 <form action="/dashboard/users/<%= user.id %>?_method=DELETE" method="POST"
-                      onsubmit="return confirm('Delete user <%= user.username %>?')">
+                      data-confirm="Delete user <%= user.username %>?">
                   <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                   <button type="submit" class="btn btn-outline-danger btn-sm"
                           <%= currentUser && (currentUser.id === user.id || user.role === 'system_admin') ? 'disabled' : '' %>>

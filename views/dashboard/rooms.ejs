@@ -137,7 +137,7 @@
                         </form>
                       <% } %>
                       <form action="/dashboard/tours/<%= tour.id %>/rooms/<%= room.id %>?_method=DELETE" method="POST" class="d-inline"
-                            onsubmit="return confirm('Delete room &quot;<%= room.name %>&quot;?')">
+                            data-confirm="Delete room &quot;<%= room.name %>&quot;?">
                         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
                         <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash"></i> Delete</button>
                       </form>
