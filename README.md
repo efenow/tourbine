@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="markdownuploads/tourbinereadme.png" alt="Tourbine Logo with Text Reading 'tourbine'" width="500">
+</p>
+
 # Tourbine
 
 Tourbine is a self-hosted virtual tour app built with Express, EJS, SQLite, and Pannellum.
@@ -138,4 +142,4 @@ The dashboard Cloudflared page stores:
 
 ## License
 
-MIT (see `LICENSE`)
+GPL-3.0 (see `LICENSE`)
