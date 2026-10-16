@@ -654,6 +654,88 @@ describe('Room CRUD', () => {
     expect(rooms.text).toContain('YouTube Room');
     expect(rooms.text).toContain('YouTube');
   });
+
+  test('POST /dashboard/tours/:tourId/rooms — creates embed (iframe) room', async () => {
+    const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
+    const token = csrf(page.text);
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+      .send({
+        _csrf: token,
+        name: 'Embed Room',
+        media_kind: 'embed',
+        embed_url: 'https://example.com/embed/map',
+        initial_pitch: '0',
+        initial_yaw: '0'
+      });
+    expect([302, 303]).toContain(res.status);
+    const rooms = await agent.get(`/dashboard/tours/${tourId}/rooms`).expect(200);
+    expect(rooms.text).toContain('Embed Room');
+    // media_embed_url is set, so the room counts as having media ("Ready")
+    expect(rooms.text).toContain('Ready');
+  });
+
+  test('POST/PUT room — default_hfov is persisted and returned by the API', async () => {
+    const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
+    const token = csrf(page.text);
+    const createRes = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+      .send({
+        _csrf: token,
+        name: 'Zoom Room',
+        media_kind: '360_image',
+        default_hfov: '75',
+        initial_pitch: '0',
+        initial_yaw: '0'
+      });
+    expect([302, 303]).toContain(createRes.status);
+
+    await agent.get(`/dashboard/tours/${tourId}/rooms`).expect(200);
+
+    // Look up the new room by name (earlier tests created other rooms in this tour)
+    const Database = require('better-sqlite3');
+    const checkDb = new Database(dbPath, { readonly: true });
+    try {
+      const zoomRoomRow = checkDb.prepare('SELECT id, default_hfov FROM rooms WHERE tour_id = ? AND name = ? ORDER BY id DESC LIMIT 1').get(tourId, 'Zoom Room');
+      expect(zoomRoomRow).toBeTruthy();
+      const zoomRoomId = zoomRoomRow.id;
+      expect(zoomRoomRow.default_hfov).toBe(75);
+
+      // Update the default HFOV
+      const editPage = await agent.get(`/dashboard/tours/${tourId}/rooms/${zoomRoomId}/edit`).expect(200);
+      const editToken = csrf(editPage.text);
+      const updRes = await agent.post(`/dashboard/tours/${tourId}/rooms/${zoomRoomId}?_method=PUT&_csrf=${encodeURIComponent(editToken)}`).type('form')
+        .send({
+          _csrf: editToken,
+          name: 'Zoom Room',
+          media_kind: '360_image',
+          default_hfov: '50',
+          initial_pitch: '0',
+          initial_yaw: '0'
+        });
+      expect([302, 303]).toContain(updRes.status);
+
+      const updated = checkDb.prepare('SELECT default_hfov FROM rooms WHERE id = ?').get(zoomRoomId);
+      expect(updated.default_hfov).toBe(50);
+
+      // The form renders the default_hfov input
+      expect(editPage.text).toContain('name="default_hfov"');
+    } finally {
+      checkDb.close();
+    }
+
+    // Verify the API returns default_hfov in room data
+    const slugDb = new Database(dbPath, { readonly: true });
+    try {
+      const tour = slugDb.prepare('SELECT slug FROM tours WHERE id = ?').get(tourId);
+      const tourSlug = tour.slug;
+      const apiRes = await request(app).get(`/api/tours/${tourSlug}`).expect(200);
+      const zoomRoomRow = slugDb.prepare('SELECT id FROM rooms WHERE tour_id = ? AND name = ? ORDER BY id DESC LIMIT 1').get(tourId, 'Zoom Room');
+      const apiRoom = apiRes.body.rooms.find(r => r.id === zoomRoomRow.id);
+      expect(apiRoom).toBeTruthy();
+      expect(apiRoom.default_hfov).toBe(50);
+    } finally {
+      slugDb.close();
+    }
+  });
 });
 
 // ─── 6. Room move-up / move-down ─────────────────────────────────────────────
@@ -778,6 +860,39 @@ describe('Hotspot CRUD', () => {
     const m = editPage.text.match(/hotspots\/(\d+)\?_method=PUT/);
     expect(m).toBeTruthy();
     hotspotId = parseInt(m[1], 10);
+  });
+
+  test('POST hotspot — external URL hotspot created, appears on edit page, stored as external', async () => {
+    const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomAId}/edit`).expect(200);
+    const token = csrf(page.text);
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms/${roomAId}/hotspots`).type('form')
+      .send({
+        _csrf: token,
+        hotspot_type: 'external',
+        external_url: 'https://example.com',
+        pitch: '7',
+        yaw: '30',
+        text: 'Visit Example'
+      });
+    expect([302, 303]).toContain(res.status);
+
+    const editPage = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomAId}/edit`).expect(200);
+    expect(editPage.text).toContain('Visit Example');
+    expect(editPage.text).toContain('https://example.com');
+    expect(editPage.text).toContain('External URL');
+
+    // Verify it is stored as external with a URL and NULL to_room_id.
+    const Database = require('better-sqlite3');
+    const testDb = new Database(dbPath, { readonly: true });
+    try {
+      const hs = testDb.prepare('SELECT is_external, url, to_room_id FROM hotspots WHERE text = ?').get('Visit Example');
+      expect(hs).toBeTruthy();
+      expect(hs.is_external).toBe(1);
+      expect(hs.url).toBe('https://example.com');
+      expect(hs.to_room_id).toBeNull();
+    } finally {
+      testDb.close();
+    }
   });
 
   test('PUT /dashboard/hotspots/:id — updates hotspot', async () => {

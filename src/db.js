@@ -48,7 +48,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS hotspots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     from_room_id INTEGER NOT NULL,
-    to_room_id INTEGER NOT NULL,
+    to_room_id INTEGER,
     pitch REAL DEFAULT 0,
     yaw REAL DEFAULT 0,
     text TEXT DEFAULT '',
@@ -99,6 +99,43 @@ try { db.exec('ALTER TABLE rooms ADD COLUMN auto_rotate INTEGER DEFAULT 0'); } c
 try { db.exec('ALTER TABLE rooms ADD COLUMN auto_rotate_speed REAL DEFAULT 1.0'); } catch (e) {}
 try { db.exec('ALTER TABLE hotspots ADD COLUMN url TEXT DEFAULT NULL'); } catch (e) {}
 try { db.exec('ALTER TABLE hotspots ADD COLUMN is_external INTEGER DEFAULT 0'); } catch (e) {}
+try { db.exec('ALTER TABLE rooms ADD COLUMN default_hfov REAL DEFAULT NULL'); } catch (e) {}
+
+// Make hotspots.to_room_id nullable so external (URL) hotspots can store NULL.
+// Fresh installs get the nullable column via CREATE TABLE above; existing
+// databases need a table rebuild because SQLite cannot ALTER COLUMN nullability.
+const hotspotsInfo = db.prepare('PRAGMA table_info(hotspots)').all();
+const toRoomIdCol = hotspotsInfo.find((c) => c.name === 'to_room_id');
+if (toRoomIdCol && toRoomIdCol.notnull === 1) {
+  try {
+    // PRAGMA foreign_keys is a no-op inside a transaction, so set it OFF before
+    // BEGIN and back ON after COMMIT/ROLLBACK.
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.exec(`
+      BEGIN TRANSACTION;
+      CREATE TABLE hotspots_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_room_id INTEGER NOT NULL,
+        to_room_id INTEGER,
+        pitch REAL DEFAULT 0,
+        yaw REAL DEFAULT 0,
+        text TEXT DEFAULT '',
+        url TEXT DEFAULT NULL,
+        is_external INTEGER DEFAULT 0,
+        FOREIGN KEY (from_room_id) REFERENCES rooms(id) ON DELETE CASCADE,
+        FOREIGN KEY (to_room_id) REFERENCES rooms(id) ON DELETE CASCADE
+      );
+      INSERT INTO hotspots_new SELECT id, from_room_id, to_room_id, pitch, yaw, text, url, is_external FROM hotspots;
+      DROP TABLE hotspots;
+      ALTER TABLE hotspots_new RENAME TO hotspots;
+      COMMIT;
+    `);
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
 
 // Role migrations for legacy installs
 db.exec(`

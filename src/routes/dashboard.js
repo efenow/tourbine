@@ -995,7 +995,7 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
       return res.render('dashboard/room-form', getRoomFormContext(tour, null, msg));
     }
 
-    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url, embed_url, auto_rotate, auto_rotate_speed } = req.body;
+    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url, embed_url, auto_rotate, auto_rotate_speed, default_hfov } = req.body;
     if (!name || !name.trim()) {
       if (req.file) unlinkFile('uploads/' + req.file.filename);
       return res.render('dashboard/room-form', getRoomFormContext(tour, null, 'Room name is required'));
@@ -1037,8 +1037,8 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
     const maxOrder = db.prepare('SELECT MAX(sort_order) AS m FROM rooms WHERE tour_id = ?').get(tour.id).m || 0;
 
     db.prepare(`
-      INSERT INTO rooms (tour_id, name, slug, image_path, media_kind, media_path, media_embed_url, initial_pitch, initial_yaw, is_default, sort_order, auto_rotate, auto_rotate_speed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO rooms (tour_id, name, slug, image_path, media_kind, media_path, media_embed_url, initial_pitch, initial_yaw, is_default, sort_order, auto_rotate, auto_rotate_speed, default_hfov)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       tour.id, name.trim(), slug, imagePath, mediaKind, mediaPath, mediaEmbedUrl,
       parseFloat(initial_pitch) || 0,
@@ -1046,7 +1046,8 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
       setDefault ? 1 : 0,
       maxOrder + 1,
       auto_rotate === 'on' ? 1 : 0,
-      parseFloat(auto_rotate_speed) || 1.0
+      parseFloat(auto_rotate_speed) || 1.0,
+      parseFloat(default_hfov) || null
     );
 
     res.redirect(`/dashboard/tours/${tour.id}/rooms`);
@@ -1077,7 +1078,7 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
       return res.render('dashboard/room-form', getRoomFormContext(tour, room, msg));
     }
 
-    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url, embed_url, auto_rotate, auto_rotate_speed } = req.body;
+    const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url, embed_url, auto_rotate, auto_rotate_speed, default_hfov } = req.body;
     if (!name || !name.trim()) {
       if (req.file) unlinkFile('uploads/' + req.file.filename);
       return res.render('dashboard/room-form', getRoomFormContext(tour, room, 'Room name is required'));
@@ -1127,7 +1128,7 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
 
     db.prepare(`
       UPDATE rooms
-      SET name = ?, slug = ?, image_path = ?, media_kind = ?, media_path = ?, media_embed_url = ?, initial_pitch = ?, initial_yaw = ?, is_default = ?, auto_rotate = ?, auto_rotate_speed = ?
+      SET name = ?, slug = ?, image_path = ?, media_kind = ?, media_path = ?, media_embed_url = ?, initial_pitch = ?, initial_yaw = ?, is_default = ?, auto_rotate = ?, auto_rotate_speed = ?, default_hfov = ?
       WHERE id = ?
     `).run(
       name.trim(), slug, imagePath, mediaKind, mediaPath, mediaEmbedUrl,
@@ -1136,6 +1137,7 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
       setDefault ? 1 : (room.is_default || 0),
       auto_rotate === 'on' ? 1 : 0,
       parseFloat(auto_rotate_speed) || 1.0,
+      parseFloat(default_hfov) || null,
       room.id
     );
 

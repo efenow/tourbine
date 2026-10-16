@@ -37,7 +37,7 @@ function buildTourData(tourSlug) {
   const hotspots = db.prepare(`
     SELECT h.*, r.name AS to_name
     FROM hotspots h
-    JOIN rooms r ON r.id = h.to_room_id
+    LEFT JOIN rooms r ON r.id = h.to_room_id
     WHERE h.from_room_id IN (SELECT id FROM rooms WHERE tour_id = ?)
   `).all(tour.id);
 
@@ -68,6 +68,7 @@ function buildTourData(tourSlug) {
       media_embed_url: room.media_embed_url || null,
       initial_pitch: room.initial_pitch,
       initial_yaw: room.initial_yaw,
+      default_hfov: room.default_hfov,
       auto_rotate: !!room.auto_rotate,
       auto_rotate_speed: room.auto_rotate_speed || 1.0,
       hotspots: roomHotspots.map(h => ({

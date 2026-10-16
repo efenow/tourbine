@@ -72,7 +72,7 @@
 
     /* ── Top-left info bar ──────────────────────────── */
     #top-bar {
-      position: fixed; top: 1rem; left: 1rem; z-index: 300;
+      position: fixed; top: 1rem; left: 1rem; z-index: 400;
       display: flex; align-items: center; gap: 0.55rem;
     }
     #back-btn {
@@ -99,7 +99,7 @@
 
     /* ── Bottom UI wrapper ──────────────────────────── */
     #bottom-ui {
-      position: fixed; bottom: 0; left: 0; right: 0; z-index: 300;
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 400;
       transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
     }
     #bottom-ui.strip-hidden { transform: translateY(calc(100% - 52px)); }
@@ -448,6 +448,10 @@
         } else if (autorotating) {
           // Update speed if already auto-rotating
           v.startAutoRotate(room.auto_rotate_speed);
+        }
+        // Apply the author's default zoom (HFOV) for this room, if one was set
+        if (room.default_hfov != null) {
+          v.setHfov(Number(room.default_hfov));
         }
         return;
       }

@@ -138,6 +138,13 @@
           </div>
         </div>
 
+        <div class="mb-3">
+          <label for="default_hfov" class="form-label">Default Zoom (HFOV)</label>
+          <input type="number" id="default_hfov" name="default_hfov" class="form-control"
+                 min="30" max="120" step="1" value="<%= room ? room.default_hfov : '' %>">
+          <div class="form-text">Initial field of view for 360° rooms (30–120). Leave empty to use the viewer default.</div>
+        </div>
+
         <div class="row g-3 mb-2">
           <div class="col">
             <label for="auto_rotate_speed" class="form-label">Auto-rotate Speed (°/s)</label>
