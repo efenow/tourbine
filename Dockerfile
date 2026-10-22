@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 
 # Install build tools required by better-sqlite3 (native addon)
 RUN apk add --no-cache python3 make g++
@@ -11,7 +11,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-FROM node:20-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 
