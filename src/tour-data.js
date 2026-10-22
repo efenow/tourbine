@@ -17,12 +17,49 @@ function getLocalMediaPath(room) {
   return room.media_path || room.image_path || null;
 }
 
+function normalizeHttpUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function roomHasRenderableMedia(room) {
   const kind = normalizeMediaKind(room);
   if (kind === MEDIA_YOUTUBE_VIDEO || kind === MEDIA_VIMEO_VIDEO || kind === MEDIA_EMBED) {
     return !!room.media_embed_url;
   }
   return !!getLocalMediaPath(room);
+}
+
+// Tours list with room counts and a cover image fallback, shared by the public
+// page and the JSON API so the two can never drift.
+function listTours() {
+  return db.prepare(`
+    SELECT t.*,
+      COUNT(r.id) AS room_count,
+      COALESCE(
+        t.cover_image_path,
+        (SELECT r2.image_path FROM rooms r2 WHERE r2.tour_id = t.id AND r2.is_default = 1 AND r2.image_path IS NOT NULL LIMIT 1),
+        (SELECT r3.image_path FROM rooms r3 WHERE r3.tour_id = t.id AND r3.image_path IS NOT NULL ORDER BY r3.sort_order ASC, r3.created_at ASC LIMIT 1)
+      ) AS cover_image
+    FROM tours t
+    LEFT JOIN rooms r ON r.tour_id = t.id
+    GROUP BY t.id
+    ORDER BY t.created_at DESC
+  `).all();
+}
+
+function groupBy(rows, key) {
+  const map = new Map();
+  for (const row of rows) {
+    const list = map.get(row[key]);
+    if (list) list.push(row);
+    else map.set(row[key], [row]);
+  }
+  return map;
 }
 
 function buildTourData(tourSlug) {
@@ -47,6 +84,11 @@ function buildTourData(tourSlug) {
     WHERE ip.room_id IN (SELECT id FROM rooms WHERE tour_id = ?)
   `).all(tour.id);
 
+  // Group once so each room looks up only its own rows instead of filtering
+  // the full hotspot/info-point list per room.
+  const hotspotsByRoom = groupBy(hotspots, 'from_room_id');
+  const infoPointsByRoom = groupBy(infoPoints, 'room_id');
+
   const scenesObj = {};
   const roomDataObj = {};
   const sceneRoomIds = new Set(
@@ -57,15 +99,16 @@ function buildTourData(tourSlug) {
   for (const room of rooms) {
     const media_kind = normalizeMediaKind(room);
     const media_path = getLocalMediaPath(room);
-    const roomHotspots = hotspots.filter(h => h.from_room_id === room.id);
-    const roomInfoPoints = infoPoints.filter(ip => ip.room_id === room.id);
+    const media_embed_url = normalizeHttpUrl(room.media_embed_url);
+    const roomHotspots = hotspotsByRoom.get(room.id) || [];
+    const roomInfoPoints = infoPointsByRoom.get(room.id) || [];
 
     roomDataObj['room-' + room.id] = {
       id: room.id,
       name: room.name,
       media_kind,
       media_path: media_path ? ('/' + media_path) : null,
-      media_embed_url: room.media_embed_url || null,
+      media_embed_url,
       initial_pitch: room.initial_pitch,
       initial_yaw: room.initial_yaw,
       default_hfov: room.default_hfov,
@@ -92,8 +135,8 @@ function buildTourData(tourSlug) {
 
     if (media_kind !== MEDIA_360_IMAGE || !media_path) continue;
 
-    const sceneHotspots = hotspots
-      .filter(h => h.from_room_id === room.id && sceneRoomIds.has(h.to_room_id))
+    const sceneHotspots = roomHotspots
+      .filter(h => sceneRoomIds.has(h.to_room_id))
       .map(h => ({
         pitch: h.pitch,
         yaw: h.yaw,
@@ -101,14 +144,15 @@ function buildTourData(tourSlug) {
         text: h.text || h.to_name,
         sceneId: 'room-' + h.to_room_id
       }));
-    const externalHotspots = hotspots
-      .filter(h => h.from_room_id === room.id && h.is_external && h.url)
+    const externalHotspots = roomHotspots
+      .map(h => ({ ...h, safeUrl: normalizeHttpUrl(h.url) }))
+      .filter(h => h.is_external && h.safeUrl)
       .map(h => ({
         pitch: h.pitch,
         yaw: h.yaw,
         type: 'info',
         text: h.text || 'External Link',
-        URL: h.url
+          URL: h.safeUrl
       }));
     const infoHotspots = roomInfoPoints
       .filter(ip => ip.pitch != null && ip.yaw != null)
@@ -136,4 +180,4 @@ function buildTourData(tourSlug) {
   return { tour, rooms, hotspots, infoPoints, scenesObj, roomDataObj, firstScene, firstRoomId, defaultRoom };
 }
 
-module.exports = { buildTourData };
+module.exports = { buildTourData, listTours };

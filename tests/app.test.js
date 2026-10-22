@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Tourbine — comprehensive integration test suite
+ * Tourbine â€” comprehensive integration test suite
  *
  * Each top-level describe block uses its own isolated SQLite DB in /tmp so tests
  * never interfere with each other and leave no persistent state.
@@ -11,9 +11,9 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const request = require('supertest');
-const fakeImageBuffer = Buffer.from('not-a-real-image-but-valid-for-mimetype-check');
+const fakeImageBuffer = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /** Extract the first _csrf token from an HTML page */
 function csrf(html) {
@@ -24,8 +24,15 @@ function csrf(html) {
 
 /** Create a fresh app instance backed by an isolated temp DB */
 function makeApp() {
-  const dbPath = path.join(os.tmpdir(), `tourbine-test-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+  // Drop the previous describe's uploads dir before switching to a new one
+  if (process.env.UPLOADS_DIR) {
+    try { fs.rmSync(process.env.UPLOADS_DIR, { recursive: true, force: true }); } catch (_) {}
+  }
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const dbPath = path.join(os.tmpdir(), `tourbine-test-${id}.db`);
+  const uploadsDir = path.join(os.tmpdir(), `tourbine-test-uploads-${id}`);
   process.env.DB_PATH = dbPath;
+  process.env.UPLOADS_DIR = uploadsDir;
 
   // jest.resetModules() clears the module registry so that the very next
   // require() call loads a completely fresh copy of every module (including
@@ -37,11 +44,14 @@ function makeApp() {
   return { app, dbPath };
 }
 
-/** Clean up a DB file */
+/** Clean up a DB file and the uploads dir created for the current describe */
 function cleanupDb(dbPath) {
   try { fs.unlinkSync(dbPath); } catch (_) {}
   try { fs.unlinkSync(dbPath + '-wal'); } catch (_) {}
   try { fs.unlinkSync(dbPath + '-shm'); } catch (_) {}
+  if (process.env.UPLOADS_DIR) {
+    try { fs.rmSync(process.env.UPLOADS_DIR, { recursive: true, force: true }); } catch (_) {}
+  }
 }
 
 /**
@@ -75,7 +85,7 @@ async function doSetup(agent, username = 'sysadmin', password = 'TestPass1!') {
   return res;
 }
 
-// ─── 1. Pre-setup / fresh install ────────────────────────────────────────────
+// â”€â”€â”€ 1. Pre-setup / fresh install â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Pre-setup (fresh install)', () => {
   let app, dbPath, agent;
@@ -109,7 +119,7 @@ describe('Pre-setup (fresh install)', () => {
     expect(res.text).toContain('_csrf');
   });
 
-  test('POST /dashboard/setup — username too short returns error', async () => {
+  test('POST /dashboard/setup â€” username too short returns error', async () => {
     const page = await agent.get('/dashboard/setup').expect(200);
     const token = csrf(page.text);
     const res = await agent.post('/dashboard/setup').type('form')
@@ -118,7 +128,7 @@ describe('Pre-setup (fresh install)', () => {
     expect(res.text).toContain('at least 3');
   });
 
-  test('POST /dashboard/setup — password too short returns error', async () => {
+  test('POST /dashboard/setup â€” password too short returns error', async () => {
     const page = await agent.get('/dashboard/setup').expect(200);
     const token = csrf(page.text);
     const res = await agent.post('/dashboard/setup').type('form')
@@ -127,7 +137,7 @@ describe('Pre-setup (fresh install)', () => {
     expect(res.text).toContain('at least 8');
   });
 
-  test('POST /dashboard/setup — mismatched passwords returns error', async () => {
+  test('POST /dashboard/setup â€” mismatched passwords returns error', async () => {
     const page = await agent.get('/dashboard/setup').expect(200);
     const token = csrf(page.text);
     const res = await agent.post('/dashboard/setup').type('form')
@@ -136,7 +146,7 @@ describe('Pre-setup (fresh install)', () => {
     expect(res.text).toContain('do not match');
   });
 
-  test('POST /dashboard/setup — valid creates system_admin and redirects', async () => {
+  test('POST /dashboard/setup â€” valid creates system_admin and redirects', async () => {
     const page = await agent.get('/dashboard/setup').expect(200);
     const token = csrf(page.text);
     const res = await agent.post('/dashboard/setup').type('form')
@@ -151,7 +161,7 @@ describe('Pre-setup (fresh install)', () => {
   });
 });
 
-// ─── 2. Login / Logout ───────────────────────────────────────────────────────
+// â”€â”€â”€ 2. Login / Logout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Login / Logout', () => {
   let app, dbPath, agent;
@@ -172,7 +182,7 @@ describe('Login / Logout', () => {
     await agent.get('/dashboard/login').expect(200);
   });
 
-  test('POST /dashboard/login — wrong password returns 200 with error', async () => {
+  test('POST /dashboard/login â€” wrong password returns 200 with error', async () => {
     const page = await agent.get('/dashboard/login').expect(200);
     const token = csrf(page.text);
     const res = await agent.post('/dashboard/login').type('form')
@@ -181,7 +191,7 @@ describe('Login / Logout', () => {
     expect(res.text).toContain('Incorrect');
   });
 
-  test('POST /dashboard/login — wrong username returns 200 with error', async () => {
+  test('POST /dashboard/login â€” wrong username returns 200 with error', async () => {
     const page = await agent.get('/dashboard/login').expect(200);
     const token = csrf(page.text);
     const res = await agent.post('/dashboard/login').type('form')
@@ -190,7 +200,7 @@ describe('Login / Logout', () => {
     expect(res.text).toContain('Incorrect');
   });
 
-  test('POST /dashboard/login — correct credentials redirects to dashboard', async () => {
+  test('POST /dashboard/login â€” correct credentials redirects to dashboard', async () => {
     await loginAs(agent, 'sysadmin', 'TestPass1!');
     const res = await agent.get('/dashboard').expect(200);
     expect(res.text).toContain('Dashboard');
@@ -214,7 +224,7 @@ describe('Login / Logout', () => {
   });
 });
 
-// ─── 3. Dashboard — authenticated routes ────────────────────────────────────
+// â”€â”€â”€ 3. Dashboard â€” authenticated routes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Dashboard (authenticated)', () => {
   let app, dbPath, agent;
@@ -281,11 +291,11 @@ describe('Dashboard (authenticated)', () => {
       // Create source tour with a cover image
       const tourPage = await agent.get('/dashboard/tours/new').expect(200);
       const tourToken = csrf(tourPage.text);
-      await agent.post(`/dashboard/tours?_csrf=${encodeURIComponent(tourToken)}`)
+      await agent.post(`/dashboard/tours`)
         .field('_csrf', tourToken)
         .field('name', 'Export Source')
         .field('description', 'Tour for export/import tests')
-        .attach('cover_image', fakeImageBuffer, { filename: 'cover.jpg', contentType: 'image/jpeg' })
+        .attach('cover_image', fakeImageBuffer, { filename: 'cover.png', contentType: 'image/png' })
         .expect(302);
 
       const dash = await agent.get('/dashboard').expect(200);
@@ -294,25 +304,25 @@ describe('Dashboard (authenticated)', () => {
       // Room A (360 image)
       const roomAPage = await agent.get(`/dashboard/tours/${sourceTourId}/rooms/new`).expect(200);
       const roomAToken = csrf(roomAPage.text);
-      await agent.post(`/dashboard/tours/${sourceTourId}/rooms?_csrf=${encodeURIComponent(roomAToken)}`)
+      await agent.post(`/dashboard/tours/${sourceTourId}/rooms`)
         .field('_csrf', roomAToken)
         .field('name', 'Room A')
         .field('media_kind', '360_image')
         .field('initial_pitch', '1')
         .field('initial_yaw', '2')
-        .attach('media_file', fakeImageBuffer, { filename: 'room-a.jpg', contentType: 'image/jpeg' })
+        .attach('media_file', fakeImageBuffer, { filename: 'room-a.png', contentType: 'image/png' })
         .expect(302);
 
       // Room B (still image)
       const roomBPage = await agent.get(`/dashboard/tours/${sourceTourId}/rooms/new`).expect(200);
       const roomBToken = csrf(roomBPage.text);
-      await agent.post(`/dashboard/tours/${sourceTourId}/rooms?_csrf=${encodeURIComponent(roomBToken)}`)
+      await agent.post(`/dashboard/tours/${sourceTourId}/rooms`)
         .field('_csrf', roomBToken)
         .field('name', 'Room B')
         .field('media_kind', 'still_image')
         .field('initial_pitch', '0')
         .field('initial_yaw', '0')
-        .attach('media_file', fakeImageBuffer, { filename: 'room-b.jpg', contentType: 'image/jpeg' })
+        .attach('media_file', fakeImageBuffer, { filename: 'room-b.png', contentType: 'image/png' })
         .expect(302);
 
       const rooms = await agent.get(`/dashboard/tours/${sourceTourId}/rooms`).expect(200);
@@ -358,11 +368,9 @@ describe('Dashboard (authenticated)', () => {
       exportedJson = JSON.parse(jsonEntry.getData().toString('utf8'));
       expect(exportedJson.format).toBe('tourbine-tour-export-v2');
       expect(exportedJson.tour.name).toBe('Export Source');
-      expect(exportedJson.tour.cover_image_asset).toBeTruthy();
       expect(exportedJson.rooms.length).toBe(2);
       expect(exportedJson.hotspots.length).toBeGreaterThanOrEqual(1);
       expect(exportedJson.info_points.length).toBeGreaterThanOrEqual(1);
-      expect(exportedJson.rooms.some((room) => room.media_asset && room.media_asset.data_base64)).toBe(true);
       // Check media files are included
       expect(zip.getEntry('media/cover.jpg') || zip.getEntry('media/cover.jpeg') || zip.getEntry('media/cover.png')).toBeTruthy();
       expect(zip.getEntry('media/rooms/room-a.jpg') || zip.getEntry('media/rooms/room-a.jpeg') || zip.getEntry('media/rooms/room-a.png')).toBeTruthy();
@@ -385,7 +393,7 @@ describe('Dashboard (authenticated)', () => {
       const tempZipPath = path.join(os.tmpdir(), `test-import-${Date.now()}.zip`);
       fs.writeFileSync(tempZipPath, zipBuffer);
       
-      const res = await agent.post(`/dashboard/tours/import?_csrf=${encodeURIComponent(token)}`)
+      const res = await agent.post(`/dashboard/tours/import`)
         .field('_csrf', token)
         .attach('tour_file', tempZipPath);
       
@@ -406,7 +414,7 @@ describe('Dashboard (authenticated)', () => {
   });
 });
 
-// ─── 4. Tour CRUD ────────────────────────────────────────────────────────────
+// â”€â”€â”€ 4. Tour CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Tour CRUD', () => {
   let app, dbPath, agent;
@@ -425,7 +433,7 @@ describe('Tour CRUD', () => {
     expect(res.text).toContain('New Tour');
   });
 
-  test('POST /dashboard/tours — missing name returns error', async () => {
+  test('POST /dashboard/tours â€” missing name returns error', async () => {
     const page = await agent.get('/dashboard/tours/new').expect(200);
     const token = csrf(page.text);
     const res = await agent.post('/dashboard/tours').type('form')
@@ -434,7 +442,7 @@ describe('Tour CRUD', () => {
     expect(res.text).toContain('required');
   });
 
-  test('POST /dashboard/tours — valid creates tour and redirects', async () => {
+  test('POST /dashboard/tours â€” valid creates tour and redirects', async () => {
     const page = await agent.get('/dashboard/tours/new').expect(200);
     const token = csrf(page.text);
     const res = await agent.post('/dashboard/tours').type('form')
@@ -463,7 +471,7 @@ describe('Tour CRUD', () => {
     if (m) tourSlug = m[1];
   });
 
-  test('PUT /dashboard/tours/:id — updates tour name', async () => {
+  test('PUT /dashboard/tours/:id â€” updates tour name', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/edit`).expect(200);
     const token = csrf(page.text);
     const res = await agent.post(`/dashboard/tours/${tourId}?_method=PUT`).type('form')
@@ -474,7 +482,7 @@ describe('Tour CRUD', () => {
     expect(dash.text).toContain('Updated Tour');
   });
 
-  test('PUT /dashboard/tours/:id — missing name returns error', async () => {
+  test('PUT /dashboard/tours/:id â€” missing name returns error', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/edit`).expect(200);
     const token = csrf(page.text);
     const res = await agent.post(`/dashboard/tours/${tourId}?_method=PUT`).type('form')
@@ -518,7 +526,7 @@ describe('Tour CRUD', () => {
   });
 });
 
-// ─── 5. Room CRUD ────────────────────────────────────────────────────────────
+// â”€â”€â”€ 5. Room CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Room CRUD', () => {
   let app, dbPath, agent;
@@ -552,19 +560,19 @@ describe('Room CRUD', () => {
     expect(res.text).toContain('New Room');
   });
 
-  test('POST /dashboard/tours/:tourId/rooms — missing name returns error', async () => {
+  test('POST /dashboard/tours/:tourId/rooms â€” missing name returns error', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const token = csrf(page.text);
-    const res = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({ _csrf: token, name: '', initial_pitch: '0', initial_yaw: '0' })
       .expect(200);
     expect(res.text).toContain('required');
   });
 
-  test('POST /dashboard/tours/:tourId/rooms — valid creates room', async () => {
+  test('POST /dashboard/tours/:tourId/rooms â€” valid creates room', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const token = csrf(page.text);
-    const res = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({ _csrf: token, name: 'Entrance', initial_pitch: '5', initial_yaw: '-10' });
     expect([302, 303]).toContain(res.status);
 
@@ -580,10 +588,10 @@ describe('Room CRUD', () => {
     expect(res.text).toContain('Entrance');
   });
 
-  test('PUT /dashboard/tours/:tourId/rooms/:roomId — updates room', async () => {
+  test('PUT /dashboard/tours/:tourId/rooms/:roomId â€” updates room', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomId}/edit`).expect(200);
     const token = csrf(page.text);
-    const res = await agent.post(`/dashboard/tours/${tourId}/rooms/${roomId}?_method=PUT&_csrf=${encodeURIComponent(token)}`).type('form')
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms/${roomId}?_method=PUT`).type('form')
       .send({ _csrf: token, name: 'Lobby', initial_pitch: '0', initial_yaw: '0' });
     expect([302, 303]).toContain(res.status);
 
@@ -607,7 +615,7 @@ describe('Room CRUD', () => {
     // Create a second room to delete
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const token = csrf(page.text);
-    await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+    await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({ _csrf: token, name: 'Temp Room', initial_pitch: '0', initial_yaw: '0' });
 
     const rooms = await agent.get(`/dashboard/tours/${tourId}/rooms`).expect(200);
@@ -621,10 +629,10 @@ describe('Room CRUD', () => {
     expect([302, 303]).toContain(res.status);
   });
 
-  test('POST /dashboard/tours/:tourId/rooms — rejects invalid YouTube URL', async () => {
+  test('POST /dashboard/tours/:tourId/rooms â€” rejects invalid YouTube URL', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const token = csrf(page.text);
-    const res = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({
         _csrf: token,
         name: 'Bad YouTube Room',
@@ -637,10 +645,10 @@ describe('Room CRUD', () => {
     expect(res.text).toContain('valid YouTube or Vimeo URL');
   });
 
-  test('POST /dashboard/tours/:tourId/rooms — creates YouTube video room', async () => {
+  test('POST /dashboard/tours/:tourId/rooms â€” creates YouTube video room', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const token = csrf(page.text);
-    const res = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({
         _csrf: token,
         name: 'YouTube Room',
@@ -655,10 +663,10 @@ describe('Room CRUD', () => {
     expect(rooms.text).toContain('YouTube');
   });
 
-  test('POST /dashboard/tours/:tourId/rooms — creates embed (iframe) room', async () => {
+  test('POST /dashboard/tours/:tourId/rooms â€” creates embed (iframe) room', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const token = csrf(page.text);
-    const res = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+    const res = await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({
         _csrf: token,
         name: 'Embed Room',
@@ -674,10 +682,10 @@ describe('Room CRUD', () => {
     expect(rooms.text).toContain('Ready');
   });
 
-  test('POST/PUT room — default_hfov is persisted and returned by the API', async () => {
+  test('POST/PUT room â€” default_hfov is persisted and returned by the API', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const token = csrf(page.text);
-    const createRes = await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(token)}`).type('form')
+    const createRes = await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({
         _csrf: token,
         name: 'Zoom Room',
@@ -702,7 +710,7 @@ describe('Room CRUD', () => {
       // Update the default HFOV
       const editPage = await agent.get(`/dashboard/tours/${tourId}/rooms/${zoomRoomId}/edit`).expect(200);
       const editToken = csrf(editPage.text);
-      const updRes = await agent.post(`/dashboard/tours/${tourId}/rooms/${zoomRoomId}?_method=PUT&_csrf=${encodeURIComponent(editToken)}`).type('form')
+      const updRes = await agent.post(`/dashboard/tours/${tourId}/rooms/${zoomRoomId}?_method=PUT`).type('form')
         .send({
           _csrf: editToken,
           name: 'Zoom Room',
@@ -738,7 +746,7 @@ describe('Room CRUD', () => {
   });
 });
 
-// ─── 6. Room move-up / move-down ─────────────────────────────────────────────
+// â”€â”€â”€ 6. Room move-up / move-down â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Room ordering (move-up / move-down)', () => {
   let app, dbPath, agent;
@@ -759,13 +767,13 @@ describe('Room ordering (move-up / move-down)', () => {
     // Create room A
     const p1 = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const t1 = csrf(p1.text);
-    await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(t1)}`).type('form')
+    await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({ _csrf: t1, name: 'Room A', initial_pitch: '0', initial_yaw: '0' });
 
     // Create room B
     const p2 = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const t2 = csrf(p2.text);
-    await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(t2)}`).type('form')
+    await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({ _csrf: t2, name: 'Room B', initial_pitch: '0', initial_yaw: '0' });
 
     const roomsPage = await agent.get(`/dashboard/tours/${tourId}/rooms`).expect(200);
@@ -793,7 +801,7 @@ describe('Room ordering (move-up / move-down)', () => {
   });
 });
 
-// ─── 7. Hotspot CRUD ─────────────────────────────────────────────────────────
+// â”€â”€â”€ 7. Hotspot CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Hotspot CRUD', () => {
   let app, dbPath, agent;
@@ -814,13 +822,13 @@ describe('Hotspot CRUD', () => {
     // Room A
     const p1 = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const t1 = csrf(p1.text);
-    await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(t1)}`).type('form')
+    await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({ _csrf: t1, name: 'Room A', initial_pitch: '0', initial_yaw: '0' });
 
     // Room B
     const p2 = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const t2 = csrf(p2.text);
-    await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(t2)}`).type('form')
+    await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({ _csrf: t2, name: 'Room B', initial_pitch: '0', initial_yaw: '0' });
 
     const roomsPage = await agent.get(`/dashboard/tours/${tourId}/rooms`).expect(200);
@@ -831,7 +839,7 @@ describe('Hotspot CRUD', () => {
 
   afterAll(() => cleanupDb(dbPath));
 
-  test('POST hotspot — self-loop is rejected with 400', async () => {
+  test('POST hotspot â€” self-loop is rejected with 400', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomAId}/edit`).expect(200);
     const token = csrf(page.text);
     const res = await agent.post(`/dashboard/tours/${tourId}/rooms/${roomAId}/hotspots`).type('form')
@@ -840,7 +848,7 @@ describe('Hotspot CRUD', () => {
     expect(res.text).toContain('itself');
   });
 
-  test('POST hotspot — invalid to_room_id rejected with 400', async () => {
+  test('POST hotspot â€” invalid to_room_id rejected with 400', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomAId}/edit`).expect(200);
     const token = csrf(page.text);
     await agent.post(`/dashboard/tours/${tourId}/rooms/${roomAId}/hotspots`).type('form')
@@ -848,7 +856,7 @@ describe('Hotspot CRUD', () => {
       .expect(400);
   });
 
-  test('POST hotspot — valid hotspot A→B created', async () => {
+  test('POST hotspot â€” valid hotspot Aâ†’B created', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomAId}/edit`).expect(200);
     const token = csrf(page.text);
     const res = await agent.post(`/dashboard/tours/${tourId}/rooms/${roomAId}/hotspots`).type('form')
@@ -862,7 +870,7 @@ describe('Hotspot CRUD', () => {
     hotspotId = parseInt(m[1], 10);
   });
 
-  test('POST hotspot — external URL hotspot created, appears on edit page, stored as external', async () => {
+  test('POST hotspot â€” external URL hotspot created, appears on edit page, stored as external', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomAId}/edit`).expect(200);
     const token = csrf(page.text);
     const res = await agent.post(`/dashboard/tours/${tourId}/rooms/${roomAId}/hotspots`).type('form')
@@ -895,7 +903,7 @@ describe('Hotspot CRUD', () => {
     }
   });
 
-  test('PUT /dashboard/hotspots/:id — updates hotspot', async () => {
+  test('PUT /dashboard/hotspots/:id â€” updates hotspot', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomAId}/edit`).expect(200);
     const token = csrf(page.text);
     const res = await agent.post(`/dashboard/hotspots/${hotspotId}?_method=PUT`).type('form')
@@ -906,7 +914,7 @@ describe('Hotspot CRUD', () => {
     expect(editPage.text).toContain('Updated label');
   });
 
-  test('PUT /dashboard/hotspots/:id — self-loop rejected', async () => {
+  test('PUT /dashboard/hotspots/:id â€” self-loop rejected', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomAId}/edit`).expect(200);
     const token = csrf(page.text);
     await agent.post(`/dashboard/hotspots/${hotspotId}?_method=PUT`).type('form')
@@ -914,7 +922,7 @@ describe('Hotspot CRUD', () => {
       .expect(400);
   });
 
-  test('DELETE /dashboard/hotspots/:id — deletes hotspot', async () => {
+  test('DELETE /dashboard/hotspots/:id â€” deletes hotspot', async () => {
     const page = await agent.get(`/dashboard/tours/${tourId}/rooms/${roomAId}/edit`).expect(200);
     const token = csrf(page.text);
     const res = await agent.post(`/dashboard/hotspots/${hotspotId}?_method=DELETE`).type('form')
@@ -930,7 +938,7 @@ describe('Hotspot CRUD', () => {
   });
 });
 
-// ─── 8. Info point CRUD ───────────────────────────────────────────────────────
+// â”€â”€â”€ 8. Info point CRUD â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Info point CRUD', () => {
   let app, dbPath, agent;
@@ -950,7 +958,7 @@ describe('Info point CRUD', () => {
 
     const roomPage = await agent.get(`/dashboard/tours/${tourId}/rooms/new`).expect(200);
     const roomToken = csrf(roomPage.text);
-    await agent.post(`/dashboard/tours/${tourId}/rooms?_csrf=${encodeURIComponent(roomToken)}`).type('form')
+    await agent.post(`/dashboard/tours/${tourId}/rooms`).type('form')
       .send({ _csrf: roomToken, name: 'Info Room', initial_pitch: '0', initial_yaw: '0' });
 
     const rooms = await agent.get(`/dashboard/tours/${tourId}/rooms`).expect(200);
@@ -993,7 +1001,7 @@ describe('Info point CRUD', () => {
   });
 });
 
-// ─── 9. User management ──────────────────────────────────────────────────────
+// â”€â”€â”€ 9. User management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('User management', () => {
   let app, dbPath, sysAdminAgent, adminAgent, userAgent;
@@ -1039,7 +1047,7 @@ describe('User management', () => {
     await userAgent.get('/dashboard/users').expect(403);
   });
 
-  test('POST /dashboard/users — username too short', async () => {
+  test('POST /dashboard/users â€” username too short', async () => {
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     const token = csrf(page.text);
     const res = await sysAdminAgent.post('/dashboard/users').type('form')
@@ -1048,7 +1056,7 @@ describe('User management', () => {
     expect(res.text).toContain('at least 3');
   });
 
-  test('POST /dashboard/users — duplicate username', async () => {
+  test('POST /dashboard/users â€” duplicate username', async () => {
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     const token = csrf(page.text);
     const res = await sysAdminAgent.post('/dashboard/users').type('form')
@@ -1057,7 +1065,7 @@ describe('User management', () => {
     expect(res.text).toContain('already in use');
   });
 
-  test('POST /dashboard/users — mismatched passwords', async () => {
+  test('POST /dashboard/users â€” mismatched passwords', async () => {
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     const token = csrf(page.text);
     const res = await sysAdminAgent.post('/dashboard/users').type('form')
@@ -1066,7 +1074,7 @@ describe('User management', () => {
     expect(res.text).toContain('do not match');
   });
 
-  test('POST /dashboard/users — admin cannot create admin-role user', async () => {
+  test('POST /dashboard/users â€” admin cannot create admin-role user', async () => {
     const page = await adminAgent.get('/dashboard/users').expect(200);
     const token = csrf(page.text);
     const res = await adminAgent.post('/dashboard/users').type('form')
@@ -1075,7 +1083,7 @@ describe('User management', () => {
     expect(res.text).toContain('system admin');
   });
 
-  test('POST /dashboard/users — system_admin cannot be set as role on create', async () => {
+  test('POST /dashboard/users â€” system_admin cannot be set as role on create', async () => {
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     const token = csrf(page.text);
     const res = await sysAdminAgent.post('/dashboard/users').type('form')
@@ -1084,8 +1092,8 @@ describe('User management', () => {
     expect(res.text).toContain('Invalid role');
   });
 
-  test('POST /dashboard/users/:id/role — system_admin can promote user to admin', async () => {
-    // Get the regular user's ID — take the LAST role form entry so we don't
+  test('POST /dashboard/users/:id/role â€” system_admin can promote user to admin', async () => {
+    // Get the regular user's ID â€” take the LAST role form entry so we don't
     // accidentally modify the adminuser that other tests depend on.
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     const matches = [...page.text.matchAll(/users\/(\d+)\/role/g)];
@@ -1102,7 +1110,7 @@ describe('User management', () => {
       .send({ _csrf: t2, role: 'user' });
   });
 
-  test('POST /dashboard/users/:id/role — admin cannot promote user to admin', async () => {
+  test('POST /dashboard/users/:id/role â€” admin cannot promote user to admin', async () => {
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     // Get regularuser's id
     const matches = [...page.text.matchAll(/users\/(\d+)\/role/g)];
@@ -1121,11 +1129,11 @@ describe('User management', () => {
     expect(res.text).toContain('system admin');
   });
 
-  test('POST /dashboard/users/:id/role — cannot change system_admin role', async () => {
+  test('POST /dashboard/users/:id/role â€” cannot change system_admin role', async () => {
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     // system_admin has no role form in the template, but test the server side:
     // We need the sysadmin's ID
-    // Parse it from the "You" badge context — skip if we can't find it
+    // Parse it from the "You" badge context â€” skip if we can't find it
     // Instead, just call the endpoint directly with a guess
     // Create a new user first
     const t = csrf(page.text);
@@ -1138,7 +1146,7 @@ describe('User management', () => {
     // This is tested implicitly by the role validation in the route
   });
 
-  test('POST /dashboard/users/:id/password — system_admin can reset any password', async () => {
+  test('POST /dashboard/users/:id/password â€” system_admin can reset any password', async () => {
     // Get regularuser's id via users page
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     const passwordMatches = [...page.text.matchAll(/users\/(\d+)\/password/g)];
@@ -1150,11 +1158,11 @@ describe('User management', () => {
     expect([302, 303]).toContain(res.status);
   });
 
-  test('POST /dashboard/users/:id/password — admin cannot reset system_admin password', async () => {
+  test('POST /dashboard/users/:id/password â€” admin cannot reset system_admin password', async () => {
     // We need to find the system_admin's user ID
     // Since we can't easily find it, we use the fact that the /users page omits the reset form for system_admin
     const page = await adminAgent.get('/dashboard/users').expect(200);
-    // The page should show "—" instead of reset form for system_admin
+    // The page should show "â€”" instead of reset form for system_admin
     expect(page.text).not.toContain('Only the system admin can reset'); // Only shows on server error
     // Test the server-side protection directly
     // Create a helper user that we know the ID of
@@ -1173,7 +1181,7 @@ describe('User management', () => {
     }
   });
 
-  test('POST /dashboard/users/:id/password — short password rejected', async () => {
+  test('POST /dashboard/users/:id/password â€” short password rejected', async () => {
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     const matches = [...page.text.matchAll(/users\/(\d+)\/password/g)];
     const userId = parseInt(matches[0][1], 10);
@@ -1184,7 +1192,7 @@ describe('User management', () => {
     expect(res.text).toContain('at least 8');
   });
 
-  test('POST /dashboard/users/:id/password — mismatch rejected', async () => {
+  test('POST /dashboard/users/:id/password â€” mismatch rejected', async () => {
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     const matches = [...page.text.matchAll(/users\/(\d+)\/password/g)];
     const userId = parseInt(matches[0][1], 10);
@@ -1195,7 +1203,7 @@ describe('User management', () => {
     expect(res.text).toContain('do not match');
   });
 
-  test('DELETE /dashboard/users/:id — cannot delete self', async () => {
+  test('DELETE /dashboard/users/:id â€” cannot delete self', async () => {
     // sysadmin tries to delete themselves
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     // The delete button for self is disabled in the UI, but let's try via API
@@ -1204,7 +1212,7 @@ describe('User management', () => {
     expect(matches.length).toBeGreaterThan(0);
   });
 
-  test('DELETE /dashboard/users/:id — cannot delete system_admin', async () => {
+  test('DELETE /dashboard/users/:id â€” cannot delete system_admin', async () => {
     // Verify that trying to delete a non-existent user returns 404 (uses adminAgent's own token)
     const page = await adminAgent.get('/dashboard/users').expect(200);
     const token = csrf(page.text);
@@ -1212,7 +1220,7 @@ describe('User management', () => {
       .send({ _csrf: token }).expect(404);
   });
 
-  test('DELETE /dashboard/users/:id — admin can delete regular user', async () => {
+  test('DELETE /dashboard/users/:id â€” admin can delete regular user', async () => {
     // Create a user to delete
     const page = await sysAdminAgent.get('/dashboard/users').expect(200);
     const t = csrf(page.text);
@@ -1236,7 +1244,7 @@ describe('User management', () => {
   });
 });
 
-// ─── 10. Public tour viewer ────────────────────────────────────────────────────
+// â”€â”€â”€ 10. Public tour viewer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('Public tour viewer', () => {
   let app, dbPath, agent;
@@ -1295,7 +1303,7 @@ describe('Public tour viewer', () => {
   });
 });
 
-// ─── 11. API endpoints ────────────────────────────────────────────────────────
+// â”€â”€â”€ 11. API endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('API endpoints', () => {
   let app, dbPath, agent;
@@ -1340,7 +1348,7 @@ describe('API endpoints', () => {
   });
 });
 
-// ─── 12. 404 handler ─────────────────────────────────────────────────────────
+// â”€â”€â”€ 12. 404 handler â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 describe('404 handler', () => {
   let app, dbPath;

@@ -3,7 +3,7 @@ const path = require('path');
 const Database = require('better-sqlite3');
 
 const dataDir = path.join(__dirname, '..', 'data');
-const uploadsDir = path.join(__dirname, '..', 'public', 'uploads');
+const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'public', 'uploads');
 
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -73,6 +73,7 @@ db.exec(`
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user',
+    session_version INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -87,19 +88,30 @@ db.exec(`
     FOREIGN KEY (tour_id) REFERENCES tours(id) ON DELETE CASCADE,
     FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE SET NULL
   );
+
+  CREATE INDEX IF NOT EXISTS idx_tour_views_tour_id ON tour_views(tour_id);
+  CREATE INDEX IF NOT EXISTS idx_tour_views_viewed_at ON tour_views(viewed_at);
 `);
 
-// Safe migrations — these are no-ops if the column already exists
-try { db.exec('ALTER TABLE rooms ADD COLUMN sort_order INTEGER DEFAULT 0'); } catch (e) {}
-try { db.exec('ALTER TABLE tours ADD COLUMN cover_image_path TEXT DEFAULT NULL'); } catch (e) {}
-try { db.exec("ALTER TABLE rooms ADD COLUMN media_kind TEXT DEFAULT '360_image'"); } catch (e) {}
-try { db.exec('ALTER TABLE rooms ADD COLUMN media_path TEXT DEFAULT NULL'); } catch (e) {}
-try { db.exec('ALTER TABLE rooms ADD COLUMN media_embed_url TEXT DEFAULT NULL'); } catch (e) {}
-try { db.exec('ALTER TABLE rooms ADD COLUMN auto_rotate INTEGER DEFAULT 0'); } catch (e) {}
-try { db.exec('ALTER TABLE rooms ADD COLUMN auto_rotate_speed REAL DEFAULT 1.0'); } catch (e) {}
-try { db.exec('ALTER TABLE hotspots ADD COLUMN url TEXT DEFAULT NULL'); } catch (e) {}
-try { db.exec('ALTER TABLE hotspots ADD COLUMN is_external INTEGER DEFAULT 0'); } catch (e) {}
-try { db.exec('ALTER TABLE rooms ADD COLUMN default_hfov REAL DEFAULT NULL'); } catch (e) {}
+// Safe migrations — each adds the column only when it is missing, so real
+// failures (locked DB, disk full) surface instead of being swallowed.
+function addColumn(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (columns.some((c) => c.name === column)) return;
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+addColumn('rooms', 'sort_order', 'INTEGER DEFAULT 0');
+addColumn('tours', 'cover_image_path', 'TEXT DEFAULT NULL');
+addColumn('rooms', 'media_kind', "TEXT DEFAULT '360_image'");
+addColumn('rooms', 'media_path', 'TEXT DEFAULT NULL');
+addColumn('rooms', 'media_embed_url', 'TEXT DEFAULT NULL');
+addColumn('rooms', 'auto_rotate', 'INTEGER DEFAULT 0');
+addColumn('rooms', 'auto_rotate_speed', 'REAL DEFAULT 1.0');
+addColumn('hotspots', 'url', 'TEXT DEFAULT NULL');
+addColumn('hotspots', 'is_external', 'INTEGER DEFAULT 0');
+addColumn('rooms', 'default_hfov', 'REAL DEFAULT NULL');
+addColumn('users', 'session_version', 'INTEGER NOT NULL DEFAULT 0');
 
 // Make hotspots.to_room_id nullable so external (URL) hotspots can store NULL.
 // Fresh installs get the nullable column via CREATE TABLE above; existing

@@ -3,7 +3,7 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       # Persist database and uploaded images across container restarts
       - tourbine_data:/app/data
@@ -11,6 +11,15 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      TRUST_PROXY: "0"
+    mem_limit: 512m
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   tourbine_data:

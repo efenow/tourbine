@@ -22,7 +22,7 @@ try {
   process.exit(1);
 }
 
-const DB_PATH = path.join(__dirname, 'data', 'tourbine.db');
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'tourbine.db');
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ async function main() {
 
   console.log('\nHashing password…');
   const hash = bcrypt.hashSync(newPassword, 12);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, targetUser.id);
+  db.prepare('UPDATE users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?').run(hash, targetUser.id);
   db.close();
 
   console.log('\n✔ Password updated successfully. You can now log in at /dashboard/login.\n');

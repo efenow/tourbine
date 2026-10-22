@@ -5,12 +5,13 @@ const methodOverride = require('method-override');
 const session = require('express-session');
 const db = require('./src/db');
 const { attachUser } = require('./src/auth');
+const { validateCsrfToken } = require('./src/csrf');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Trust the first proxy hop so secure session cookies work behind HTTPS proxies
-app.set('trust proxy', 1);
+app.set('trust proxy', process.env.TRUST_PROXY === '1');
 
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -21,8 +22,10 @@ app.use(methodOverride('_method'));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Security headers: prevent MIME sniffing on served assets (incl. user uploads)
+// and keep same-origin URLs (which may carry a CSRF token) out of referers.
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
   next();
 });
 
@@ -47,44 +50,32 @@ app.use(session({
   }
 }));
 
-// CSRF protection (synchronizer token pattern using session storage)
+// CSRF protection (synchronizer token pattern using session storage).
+// Tokens are only minted for the dashboard, which is the only part of the app
+// that renders forms. Public GET routes therefore never start a session, so the
+// in-memory session store stays small under public traffic.
+// shortcut: sessions still live in process memory; fine for a few dashboard
+// users, move to a persistent session store if dashboard users grow or you run
+// more than one process.
 app.use((req, res, next) => {
-  if (!req.session.csrfToken) {
-    req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+  if (req.path.startsWith('/dashboard')) {
+    if (!req.session.csrfToken) {
+      req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+    }
+    // Make CSRF token available in all dashboard EJS templates
+    res.locals.csrfToken = req.session.csrfToken;
   }
-
-  // Make CSRF token available in all EJS templates
-  res.locals.csrfToken = req.session.csrfToken;
 
   // Only validate unsafe methods
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
     return next();
   }
 
-  // Check body (URL-encoded forms), query string (multipart/form-data flows), and header (AJAX)
-  const requestToken = (req.body && req.body._csrf)
-    || (req.query && req.query._csrf)
-    || req.get('x-csrf-token');
+  // Multer parses multipart bodies inside route handlers. Those handlers
+  // validate the body token after parsing, so tokens never enter URLs.
+  if (req.is('multipart/form-data')) return next();
 
-  if (!requestToken) {
-    const err = new Error('Invalid or missing CSRF token.');
-    err.code = 'EBADCSRFTOKEN';
-    return next(err);
-  }
-
-  const sessionToken = req.session.csrfToken;
-  const csrfTokenPattern = /^[a-f0-9]{64}$/i;
-  if (!csrfTokenPattern.test(requestToken) || !csrfTokenPattern.test(sessionToken)) {
-    const err = new Error('Invalid or missing CSRF token.');
-    err.code = 'EBADCSRFTOKEN';
-    return next(err);
-  }
-
-  const requestTokenBuffer = Buffer.from(requestToken, 'hex');
-  const sessionTokenBuffer = Buffer.from(sessionToken, 'hex');
-  const tokensMatch = crypto.timingSafeEqual(requestTokenBuffer, sessionTokenBuffer);
-
-  if (!tokensMatch) {
+  if (!validateCsrfToken(req)) {
     const err = new Error('Invalid or missing CSRF token.');
     err.code = 'EBADCSRFTOKEN';
     return next(err);
@@ -114,7 +105,7 @@ app.use((err, req, res, next) => {
   }
   console.error(err.stack);
   if (!res.locals.csrfToken) res.locals.csrfToken = '';
-  res.status(500).render('error', { title: 'Error', status: 500, message: err.message || 'Internal Server Error' });
+  res.status(500).render('error', { title: 'Error', status: 500, message: 'Internal Server Error' });
 });
 
 if (require.main === module) {

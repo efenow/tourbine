@@ -7,26 +7,19 @@ function isUserSetup() {
 
 function loadUser(userId) {
   if (!userId) return null;
-  return db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(userId);
+  return db.prepare('SELECT id, username, role, session_version, created_at FROM users WHERE id = ?').get(userId);
 }
 
 function attachUser(req, res, next) {
   res.locals.currentUser = null;
   if (req.session && req.session.userId) {
     const user = loadUser(req.session.userId);
-    if (user) {
+    if (user && user.session_version === req.session.sessionVersion) {
       req.user = user;
       res.locals.currentUser = user;
     } else {
       delete req.session.userId;
     }
-  }
-  next();
-}
-
-function requireSetup(req, res, next) {
-  if (!isUserSetup()) {
-    return res.redirect('/dashboard/setup');
   }
   next();
 }
@@ -37,7 +30,7 @@ function requireAuth(req, res, next) {
   }
   if (req.session && req.session.userId) {
     const user = loadUser(req.session.userId);
-    if (user) {
+    if (user && user.session_version === req.session.sessionVersion) {
       req.user = user;
       res.locals.currentUser = user;
       return next();
@@ -61,4 +54,4 @@ function requireRole(roles) {
   };
 }
 
-module.exports = { isUserSetup, requireSetup, requireAuth, requireRole, attachUser };
+module.exports = { isUserSetup, requireAuth, requireRole, attachUser };

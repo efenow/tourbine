@@ -32,6 +32,8 @@ It provides:
 | `PORT` | `3000` | HTTP port the server listens on |
 | `NODE_ENV` | `development` | Set to `production` to enable secure session cookies |
 | `DB_PATH` | `data/tourbine.db` | Path to the SQLite database file |
+| `UPLOADS_DIR` | `public/uploads` | Directory uploaded media is written to |
+| `TRUST_PROXY` | `0` | Set to `1` only when a trusted reverse proxy is the only path to the app |
 
 ## Run locally
 
@@ -194,7 +196,7 @@ The dashboard Cloudflared page (`/dashboard/cloudflared`) stores:
 - hostname
 - service URL
 
-Session cookies work automatically behind the Cloudflare HTTPS proxy thanks to Express `trust proxy`.
+The default Docker Compose binding is loopback-only. Keep it that way when Cloudflare Tunnel or another trusted proxy is the only ingress. Set `TRUST_PROXY=1` only when direct access is blocked and exactly one trusted proxy sits in front of the app.
 
 ## Project structure
 
@@ -205,7 +207,7 @@ Session cookies work automatically behind the Cloudflare HTTPS proxy thanks to E
 - `src/tour-data.js` — tour data assembly for viewer and API
 - `src/routes/` — public, dashboard, tour, and API routes
 - `views/` — EJS templates
-- `public/` — static assets (CSS, vendor libraries, user uploads)
+- `public/` — static assets (CSS and user uploads)
 - `data/` — SQLite database (created on first run)
 - `reset-password.js` — password recovery CLI
 

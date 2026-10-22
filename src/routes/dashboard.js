@@ -11,6 +11,7 @@ const db = require('../db');
 const upload = require('../upload');
 const slugify = require('slugify');
 const { isUserSetup, requireAuth, requireRole } = require('../auth');
+const { validateCsrfToken } = require('../csrf');
 
 const BCRYPT_ROUNDS = 12;
 const ROLE_SYSTEM_ADMIN = 'system_admin';
@@ -46,11 +47,23 @@ const dashboardLimiter = rateLimit({
 // Apply dashboard limiter to all /dashboard routes
 router.use(dashboardLimiter);
 
-const uploadsDir = path.resolve(path.join(__dirname, '..', '..', 'public', 'uploads'));
+const uploadsDir = process.env.UPLOADS_DIR || path.resolve(path.join(__dirname, '..', '..', 'public', 'uploads'));
 const tourImportUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 150 * 1024 * 1024 }
 });
+
+const MAX_IMPORT_ENTRIES = 500;
+const MAX_IMPORT_RECORDS = 5000;
+const MAX_IMPORT_BYTES = 250 * 1024 * 1024;
+const MAX_EXPORT_BYTES = 250 * 1024 * 1024;
+
+function rejectMultipartCsrf(req, res) {
+  if (validateCsrfToken(req)) return false;
+  if (req.file && req.file.filename) unlinkFile(`uploads/${req.file.filename}`);
+  res.status(403).render('error', { title: 'Forbidden', status: 403, message: 'Invalid or missing CSRF token.' });
+  return true;
+}
 
 function makeSlug(text) {
   return slugify(text, { lower: true, strict: true, trim: true });
@@ -90,37 +103,31 @@ function unlinkFile(imagePath) {
   } catch (e) { /* file may not exist */ }
 }
 
-function readStoredUploadAsset(storedPath) {
-  if (!storedPath) return null;
+// Add a stored upload to an export ZIP straight from disk. Reads each file once
+// and keeps raw bytes, so media is never base64-encoded in memory.
+function addStoredFile(zip, storedPath, zipDir, name, state) {
   try {
-    const filename = path.basename(String(storedPath));
-    if (!filename || filename === '.' || filename === '..') return null;
+    const filename = path.basename(String(storedPath || ''));
+    if (!filename || filename === '.' || filename === '..') return;
     const absolutePath = path.join(uploadsDir, filename);
-    if (!fs.existsSync(absolutePath)) return null;
-    const data = fs.readFileSync(absolutePath);
-    if (!data || data.length === 0) return null;
-    return {
-      filename,
-      data_base64: data.toString('base64')
-    };
+    if (!fs.existsSync(absolutePath)) return true;
+    const size = fs.statSync(absolutePath).size;
+    if (state.bytes + size > MAX_EXPORT_BYTES) return false;
+    const ext = path.extname(filename).toLowerCase();
+    zip.addFile(`${zipDir}/${name}${ext}`, fs.readFileSync(absolutePath));
+    state.bytes += size;
+    return true;
   } catch (e) {
-    return null;
+    // Skip media that cannot be read
+    return true;
   }
 }
 
-function writeImportedUploadAsset(asset) {
-  if (!asset || typeof asset !== 'object' || !asset.data_base64) return null;
-  const extSource = asset.filename || asset.path || '';
-  const ext = path.extname(String(extSource || '')).toLowerCase();
-  const allowedExt = ['.jpg', '.jpeg', '.png', '.webp', '.mp4', '.webm', '.ogg', '.mov'];
-  if (!allowedExt.includes(ext)) return null;
-
-  const buffer = Buffer.from(String(asset.data_base64 || ''), 'base64');
-  if (!buffer.length) return null;
-  const filename = `${crypto.randomBytes(12).toString('hex')}${ext}`;
-  const absolutePath = path.join(uploadsDir, filename);
-  fs.writeFileSync(absolutePath, buffer);
-  return `uploads/${filename}`;
+function findMediaKey(mediaFiles, prefix) {
+  for (const key of mediaFiles.keys()) {
+    if (key.startsWith(prefix)) return key;
+  }
+  return null;
 }
 
 function getSetting(key, defaultValue = '') {
@@ -149,6 +156,13 @@ function getCloudflaredConfig() {
 function normalizeMediaKind(value, fallback = MEDIA_360_IMAGE) {
   const kind = String(value || '').trim();
   return MEDIA_KINDS.includes(kind) ? kind : fallback;
+}
+
+// parseFloat('0') is 0, which is a real value. Only fall back when the input
+// is not a finite number.
+function toNumber(value, fallback) {
+  const n = parseFloat(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function isExternalVideoKind(kind) {
@@ -203,6 +217,17 @@ function normalizeEmbedUrl(input) {
     const parsed = new URL(raw);
     const protocol = parsed.protocol.toLowerCase();
     if (protocol !== 'http:' && protocol !== 'https:') return null;
+    return raw;
+  } catch (e) {
+    return null;
+  }
+}
+
+function normalizeExternalUrl(input) {
+  const raw = String(input || '').trim();
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
     return raw;
   } catch (e) {
     return null;
@@ -267,6 +292,7 @@ router.post('/setup', (req, res) => {
     ROLE_SYSTEM_ADMIN
   );
   req.session.userId = result.lastInsertRowid;
+  req.session.sessionVersion = 0;
   req.session.save(() => res.redirect('/dashboard'));
 });
 
@@ -290,6 +316,7 @@ router.post('/login', loginLimiter, (req, res) => {
   req.session.regenerate((err) => {
     if (err) return res.render('dashboard/login', { title: 'Login', error: 'Session error. Please try again.' });
     req.session.userId = user.id;
+    req.session.sessionVersion = user.session_version;
     req.session.save(() => res.redirect(returnTo));
   });
 });
@@ -302,7 +329,6 @@ router.post('/logout', (req, res) => {
 // All routes below require authentication
 router.use(requireAuth);
 
-const requireEditor = requireRole([ROLE_SYSTEM_ADMIN, ROLE_ADMIN]);
 const requireAdmin = requireRole([ROLE_SYSTEM_ADMIN, ROLE_ADMIN]);
 
 const VALID_ROLES = [ROLE_SYSTEM_ADMIN, ROLE_ADMIN, ROLE_USER];
@@ -455,8 +481,11 @@ router.post('/users/:id/role', requireAdmin, (req, res) => {
 router.post('/users/:id/password', requireAdmin, (req, res) => {
   const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'User not found' });
-  if (user.role === ROLE_SYSTEM_ADMIN && !canGrantAdmin(req.user)) {
-    return renderUsersPage(res, 'Only the system admin can reset the system admin password.');
+  // An admin may reset their own password or a regular user's. Resetting another
+  // admin or the system admin is reserved for the system admin.
+  const isSelf = req.user && req.user.id === user.id;
+  if (user.role !== ROLE_USER && !isSelf && !canGrantAdmin(req.user)) {
+    return renderUsersPage(res, 'Only the system admin can reset an admin password.');
   }
   const { password, confirm } = req.body;
   if (!password || password.length < 8) {
@@ -466,7 +495,7 @@ router.post('/users/:id/password', requireAdmin, (req, res) => {
     return renderUsersPage(res, 'Passwords do not match.');
   }
   const hash = bcrypt.hashSync(password, BCRYPT_ROUNDS);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, user.id);
+  db.prepare('UPDATE users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?').run(hash, user.id);
   res.redirect('/dashboard/users');
 });
 
@@ -477,31 +506,37 @@ router.delete('/users/:id', requireAdmin, (req, res) => {
   if (req.user && req.user.id === user.id) {
     return renderUsersPage(res, 'You cannot delete your own account while logged in.');
   }
-  if (user.role === ROLE_SYSTEM_ADMIN) {
-    return renderUsersPage(res, 'The system admin account cannot be deleted.');
+  // Only the system admin may delete another admin account.
+  if (user.role !== ROLE_USER && !canGrantAdmin(req.user)) {
+    return renderUsersPage(res, 'Only the system admin can delete an admin account.');
   }
   db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
   res.redirect('/dashboard/users');
 });
 
 // GET /dashboard/tours/new
-router.get('/tours/new', requireEditor, (req, res) => {
+router.get('/tours/new', requireAdmin, (req, res) => {
   res.render('dashboard/tour-form', { title: 'New Tour', tour: null, error: null });
 });
 
 // GET /dashboard/tours/import
-router.get('/tours/import', requireEditor, (req, res) => {
+router.get('/tours/import', requireAdmin, (req, res) => {
   res.render('dashboard/tour-import', { title: 'Import Tour', error: null });
 });
 
 // POST /dashboard/tours
-router.post('/tours', requireEditor, (req, res) => {
+router.post('/tours', requireAdmin, (req, res) => {
   upload.single('cover_image')(req, res, (err) => {
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
         ? 'Cover image is too large. Maximum size is 100 MB.'
-        : (err.message || 'File upload failed.');
+        : 'File upload failed.';
       return res.render('dashboard/tour-form', { title: 'New Tour', tour: null, error: msg });
+    }
+    if (rejectMultipartCsrf(req, res)) return;
+    if (req.file && !upload.isValidMediaBuffer(fs.readFileSync(req.file.path), req.file.mimetype)) {
+      unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/tour-form', { title: 'New Tour', tour: null, error: 'Invalid media file.' });
     }
 
     const { name, description } = req.body;
@@ -522,17 +557,18 @@ router.post('/tours', requireEditor, (req, res) => {
 });
 
 // POST /dashboard/tours/import
-router.post('/tours/import', requireEditor, (req, res) => {
+router.post('/tours/import', requireAdmin, (req, res) => {
   tourImportUpload.single('tour_file')(req, res, (err) => {
     if (err) {
       const message = err.code === 'LIMIT_FILE_SIZE'
         ? 'Import file is too large. Maximum size is 150 MB.'
-        : (err.message || 'Import failed.');
+        : 'Import failed.';
       return res.render('dashboard/tour-import', { title: 'Import Tour', error: message });
     }
     if (!req.file || !req.file.buffer) {
       return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'Please select an export file (ZIP or JSON).' });
     }
+    if (rejectMultipartCsrf(req, res)) return;
 
     let payload;
     const createdFiles = [];
@@ -543,20 +579,29 @@ router.post('/tours/import', requireEditor, (req, res) => {
       
       if (isZip) {
         // Parse ZIP file
-        const zip = new AdmZip(req.file.buffer);
-        const jsonEntry = zip.getEntry('tour.json');
-        if (!jsonEntry) {
-          return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'ZIP file is missing tour.json.' });
-        }
-        const jsonContent = jsonEntry.getData().toString('utf8');
+         const zip = new AdmZip(req.file.buffer);
+         const jsonEntry = zip.getEntry('tour.json');
+         if (!jsonEntry) {
+           return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'ZIP file is missing tour.json.' });
+         }
+         if (Number(jsonEntry.header && jsonEntry.header.size) > MAX_IMPORT_BYTES) {
+           throw new Error('Import metadata is too large.');
+         }
+         const jsonContent = jsonEntry.getData().toString('utf8');
         payload = JSON.parse(jsonContent);
 
-        // Extract media files to a temporary map
-        const mediaFiles = new Map();
-        zip.getEntries().forEach(entry => {
-          if (entry.entryName.startsWith('media/') && !entry.isDirectory) {
-            const base64 = entry.getData().toString('base64');
-            mediaFiles.set(entry.entryName, base64);
+        // Keep entry handles instead of base64 copies so each media file is
+        // only decoded when it is actually written.
+         const entries = zip.getEntries();
+         if (entries.length > MAX_IMPORT_ENTRIES) throw new Error('Import contains too many archive entries.');
+         const mediaFiles = new Map();
+          let expandedBytes = 0;
+          entries.forEach(entry => {
+           const size = Number(entry.header && entry.header.size) || 0;
+           expandedBytes += size;
+           if (expandedBytes > MAX_IMPORT_BYTES) throw new Error('Import content is too large.');
+           if (entry.entryName.startsWith('media/') && !entry.isDirectory) {
+            mediaFiles.set(entry.entryName, entry);
           }
         });
 
@@ -578,46 +623,51 @@ router.post('/tours/import', requireEditor, (req, res) => {
     }
 
     const sourceTour = payload.tour;
-    const sourceRooms = payload.rooms;
+     const sourceRooms = payload.rooms;
     const sourceHotspots = Array.isArray(payload.hotspots) ? payload.hotspots : [];
-    const sourceInfoPoints = Array.isArray(payload.info_points) ? payload.info_points : [];
-    const mediaFiles = payload._mediaFiles || new Map();
+     const sourceInfoPoints = Array.isArray(payload.info_points) ? payload.info_points : [];
+     if (sourceRooms.length + sourceHotspots.length + sourceInfoPoints.length > MAX_IMPORT_RECORDS) {
+       return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'Import contains too many records.' });
+     }
+     const mediaFiles = payload._mediaFiles || new Map();
+     let importedBytes = 0;
     const tourName = String(sourceTour.name || '').trim();
     if (!tourName) {
       return res.render('dashboard/tour-import', { title: 'Import Tour', error: 'Export is missing a tour name.' });
     }
 
-    function writeMediaAsset(asset, fallbackName) {
+     function writeMediaAsset(asset, fallbackName) {
       if (!asset || typeof asset !== 'object') return null;
-      let base64 = asset.data_base64;
-      let ext = path.extname(asset.filename || asset.path || fallbackName || '').toLowerCase();
-      if (!ext && base64) {
-        // Try to detect from base64 header
-        if (base64.startsWith('/9j/')) ext = '.jpg';
-        else if (base64.startsWith('iVBORw0KGgo')) ext = '.png';
-        else if (base64.startsWith('UklGR')) ext = '.webp';
-        else if (base64.startsWith('AAAAIGZ0eXA')) ext = '.mp4';
-        else ext = '.bin';
-      }
-      const allowedExt = ['.jpg', '.jpeg', '.png', '.webp', '.mp4', '.webm', '.ogg', '.mov'];
-      if (!allowedExt.includes(ext)) return null;
-      if (!base64 || !base64.length) return null;
-      const buffer = Buffer.from(base64, 'base64');
-      if (!buffer.length) return null;
+       const base64 = asset.data_base64;
+       const buffer = asset.buffer || (base64 ? Buffer.from(base64, 'base64') : null);
+       if (!buffer || !buffer.length || buffer.length > MAX_IMPORT_BYTES || importedBytes + buffer.length > MAX_IMPORT_BYTES) return null;
+       importedBytes += buffer.length;
+       const ext = upload.detectMediaExtension(buffer);
+       if (!ext) return null;
+
       const filename = `${crypto.randomBytes(12).toString('hex')}${ext}`;
       const absolutePath = path.join(uploadsDir, filename);
       fs.writeFileSync(absolutePath, buffer);
-      return `uploads/${filename}`;
-    }
+       return `uploads/${filename}`;
+     }
 
-    try {
+     function readArchiveAsset(entry) {
+       const size = Number(entry && entry.header && entry.header.size);
+       if (!Number.isFinite(size) || size > MAX_IMPORT_BYTES || importedBytes + size > MAX_IMPORT_BYTES) return null;
+       const buffer = entry.getData();
+       return buffer.length === size ? buffer : null;
+     }
+
+    // Wrap every insert in one transaction so a failed import rolls back
+    // instead of leaving a half-written tour behind.
+    const importTour = db.transaction(() => {
       const newTourSlug = uniqueTourSlug(tourName);
       let coverImagePath = null;
       
       // Try cover from mediaFiles (ZIP) first, then from asset (JSON)
-      const coverMediaKey = Object.keys(mediaFiles).find(k => k.startsWith('media/cover'));
+      const coverMediaKey = findMediaKey(mediaFiles, 'media/cover');
       if (coverMediaKey) {
-        coverImagePath = writeMediaAsset({ data_base64: mediaFiles.get(coverMediaKey), filename: coverMediaKey }, 'cover');
+         coverImagePath = writeMediaAsset({ buffer: readArchiveAsset(mediaFiles.get(coverMediaKey)), filename: coverMediaKey }, 'cover');
       } else if (sourceTour.cover_image_asset) {
         coverImagePath = writeMediaAsset(sourceTour.cover_image_asset, 'cover');
       }
@@ -644,13 +694,13 @@ router.post('/tours/import', requireEditor, (req, res) => {
         if (isExternalVideoKind(mediaKind)) {
           mediaEmbedUrl = normalizeExternalVideoUrl(mediaKind, sourceRoom.media_embed_url) || null;
         } else if (isEmbedKind(mediaKind)) {
-          mediaEmbedUrl = String(sourceRoom.media_embed_url || '').trim();
+           mediaEmbedUrl = normalizeEmbedUrl(sourceRoom.media_embed_url);
         } else {
           // Local media - try ZIP first, then JSON asset
           const mediaKey = `media/rooms/${sourceRoom.slug}`;
-          const mediaKeyWithExt = Object.keys(mediaFiles).find(k => k.startsWith(mediaKey));
+          const mediaKeyWithExt = findMediaKey(mediaFiles, mediaKey);
           if (mediaKeyWithExt) {
-            mediaPath = writeMediaAsset({ data_base64: mediaFiles.get(mediaKeyWithExt), filename: mediaKeyWithExt }, sourceRoom.slug);
+             mediaPath = writeMediaAsset({ buffer: readArchiveAsset(mediaFiles.get(mediaKeyWithExt)), filename: mediaKeyWithExt }, sourceRoom.slug);
           } else if (sourceRoom.media_asset) {
             mediaPath = writeMediaAsset(sourceRoom.media_asset, sourceRoom.slug);
           }
@@ -675,7 +725,7 @@ router.post('/tours/import', requireEditor, (req, res) => {
           sourceRoom.is_default ? 1 : 0,
           Number.isFinite(parsedSortOrder) ? parsedSortOrder : (i + 1),
           sourceRoom.auto_rotate ? 1 : 0,
-          parseFloat(sourceRoom.auto_rotate_speed) || 1.0
+          toNumber(sourceRoom.auto_rotate_speed, 1.0)
         );
 
         roomIdBySourceSlug.set(String(sourceRoom.slug || roomSlug), roomInsert.lastInsertRowid);
@@ -684,30 +734,29 @@ router.post('/tours/import', requireEditor, (req, res) => {
       for (const hs of sourceHotspots) {
         const fromId = roomIdBySourceSlug.get(String(hs.from_room_slug || ''));
         const toId = roomIdBySourceSlug.get(String(hs.to_room_slug || ''));
-        if (!fromId || (hs.is_external && hs.url) || (!hs.is_external && toId && fromId !== toId)) {
-          if (hs.is_external && hs.url) {
-            // External link hotspot
-            db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-              fromId,
-              null,
-              parseFloat(hs.pitch) || 0,
-              parseFloat(hs.yaw) || 0,
-              String(hs.text || ''),
-              hs.url,
-              1
-            );
-          } else if (toId && fromId !== toId) {
-            // Room-to-room hotspot
-            db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-              fromId,
-              toId,
-              parseFloat(hs.pitch) || 0,
-              parseFloat(hs.yaw) || 0,
-              String(hs.text || ''),
-              null,
-              0
-            );
-          }
+        if (!fromId) continue;
+        if (hs.is_external && normalizeExternalUrl(hs.url)) {
+          // External link hotspot
+          db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+            fromId,
+            null,
+            parseFloat(hs.pitch) || 0,
+            parseFloat(hs.yaw) || 0,
+            String(hs.text || ''),
+            normalizeExternalUrl(hs.url),
+            1
+          );
+        } else if (toId && fromId !== toId) {
+          // Room-to-room hotspot
+          db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+            fromId,
+            toId,
+            parseFloat(hs.pitch) || 0,
+            parseFloat(hs.yaw) || 0,
+            String(hs.text || ''),
+            null,
+            0
+          );
         }
       }
 
@@ -737,34 +786,44 @@ router.post('/tours/import', requireEditor, (req, res) => {
         if (firstRoom) db.prepare('UPDATE rooms SET is_default = 1 WHERE id = ?').run(firstRoom.id);
       }
 
+      return newTourId;
+    });
+
+    try {
+      const newTourId = importTour();
       return res.redirect(`/dashboard/tours/${newTourId}/rooms`);
     } catch (importError) {
       for (const filePath of createdFiles) unlinkFile(filePath);
       return res.render('dashboard/tour-import', {
         title: 'Import Tour',
-        error: importError.message || 'Import failed.'
+        error: 'Import failed.'
       });
     }
   });
 });
 
 // GET /dashboard/tours/:id/edit
-router.get('/tours/:id/edit', requireEditor, (req, res) => {
+router.get('/tours/:id/edit', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   res.render('dashboard/tour-form', { title: 'Edit Tour', tour, error: null });
 });
 
 // PUT /dashboard/tours/:id
-router.put('/tours/:id', requireEditor, (req, res) => {
+router.put('/tours/:id', requireAdmin, (req, res) => {
   upload.single('cover_image')(req, res, (err) => {
     const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
     if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
         ? 'Cover image is too large. Maximum size is 100 MB.'
-        : (err.message || 'File upload failed.');
+        : 'File upload failed.';
       return res.render('dashboard/tour-form', { title: 'Edit Tour', tour, error: msg });
+    }
+    if (rejectMultipartCsrf(req, res)) return;
+    if (req.file && !upload.isValidMediaBuffer(fs.readFileSync(req.file.path), req.file.mimetype)) {
+      unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/tour-form', { title: 'Edit Tour', tour, error: 'Invalid media file.' });
     }
 
     const { name, description, remove_cover } = req.body;
@@ -794,7 +853,7 @@ router.put('/tours/:id', requireEditor, (req, res) => {
 });
 
 // POST /dashboard/tours/:id/duplicate
-router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
+router.post('/tours/:id/duplicate', requireAdmin, (req, res) => {
   const original = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
   if (!original) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
 
@@ -811,9 +870,9 @@ router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
     const mediaKind = normalizeMediaKind(room.media_kind, MEDIA_360_IMAGE);
     let mediaEmbedUrl = null;
     if (isExternalVideoKind(mediaKind)) {
-      mediaEmbedUrl = room.media_embed_url || null;
+      mediaEmbedUrl = normalizeExternalVideoUrl(mediaKind, room.media_embed_url);
     } else if (isEmbedKind(mediaKind)) {
-      mediaEmbedUrl = room.media_embed_url || null;
+      mediaEmbedUrl = normalizeEmbedUrl(room.media_embed_url);
     }
     const result = db.prepare(
       `
@@ -841,14 +900,14 @@ router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
 
   // Duplicate hotspots (only those where both from and to rooms are in the duplicated set)
   const hotspots = db.prepare('SELECT * FROM hotspots WHERE from_room_id IN (SELECT id FROM rooms WHERE tour_id = ?)').all(original.id);
-  for (const hs of hotspots) {
+   for (const hs of hotspots) {
     const newFromId = roomIdMap[hs.from_room_id];
     const newToId = roomIdMap[hs.to_room_id];
-    if (hs.is_external && hs.url) {
+    if (hs.is_external && normalizeExternalUrl(hs.url)) {
       // External link hotspot
       if (newFromId) {
         db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-          newFromId, null, hs.pitch, hs.yaw, hs.text, hs.url, 1
+          newFromId, null, hs.pitch, hs.yaw, hs.text, normalizeExternalUrl(hs.url), 1
         );
       }
     } else if (newFromId && newToId) {
@@ -875,7 +934,7 @@ router.post('/tours/:id/duplicate', requireEditor, (req, res) => {
 });
 
 // GET /dashboard/tours/:id/export
-router.get('/tours/:id/export', requireEditor, (req, res) => {
+router.get('/tours/:id/export', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
 
@@ -884,7 +943,7 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
     SELECT h.*, fr.slug AS from_slug, tr.slug AS to_slug
     FROM hotspots h
     JOIN rooms fr ON fr.id = h.from_room_id
-    JOIN rooms tr ON tr.id = h.to_room_id
+    LEFT JOIN rooms tr ON tr.id = h.to_room_id
     WHERE fr.tour_id = ?
   `).all(tour.id);
   const infoPoints = db.prepare(`
@@ -901,8 +960,7 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
     tour: {
       name: tour.name,
       description: tour.description || '',
-      slug: tour.slug,
-      cover_image_asset: readStoredUploadAsset(tour.cover_image_path)
+      slug: tour.slug
     },
     rooms: rooms.map((room) => ({
       name: room.name,
@@ -914,8 +972,7 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
       auto_rotate: !!room.auto_rotate,
       auto_rotate_speed: room.auto_rotate_speed || 1.0,
       is_default: !!room.is_default,
-      sort_order: room.sort_order,
-      media_asset: readStoredUploadAsset(room.media_path || room.image_path)
+      sort_order: room.sort_order
     })),
     hotspots: hotspots.map((hs) => ({
       from_room_slug: hs.from_slug,
@@ -923,7 +980,7 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
       pitch: hs.pitch,
       yaw: hs.yaw,
       text: hs.text || '',
-      url: hs.url || null,
+      url: normalizeExternalUrl(hs.url),
       is_external: !!hs.is_external
     })),
     info_points: infoPoints.map((ip) => ({
@@ -939,26 +996,23 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
 
   // Create zip file
   const zip = new AdmZip();
-  const jsonContent = JSON.stringify(payload, null, 2);
-  zip.addFile('tour.json', Buffer.from(jsonContent, 'utf8'));
+  const jsonBuffer = Buffer.from(JSON.stringify(payload, null, 2), 'utf8');
+  if (jsonBuffer.length > MAX_EXPORT_BYTES) {
+    return res.status(413).render('error', { title: 'Export too large', status: 413, message: 'Tour export exceeds the size limit.' });
+  }
+  zip.addFile('tour.json', jsonBuffer);
 
-  // Add cover image if exists
-  if (tour.cover_image_path) {
-    const coverAsset = readStoredUploadAsset(tour.cover_image_path);
-    if (coverAsset) {
-      const ext = path.extname(tour.cover_image_path).toLowerCase();
-      zip.addFile(`media/cover${ext}`, Buffer.from(coverAsset.data_base64, 'base64'));
-    }
+  // Media goes into the ZIP from disk, so it is never base64-encoded in memory
+  const exportState = { bytes: jsonBuffer.length };
+  if (!addStoredFile(zip, tour.cover_image_path, 'media', 'cover', exportState)) {
+    return res.status(413).render('error', { title: 'Export too large', status: 413, message: 'Tour export exceeds the size limit.' });
   }
 
-  // Add room media files
   for (const room of rooms) {
     const mediaPath = room.media_path || room.image_path;
     if (mediaPath && (room.media_kind === '360_image' || room.media_kind === 'still_image' || room.media_kind === 'local_video')) {
-      const asset = readStoredUploadAsset(mediaPath);
-      if (asset) {
-        const ext = path.extname(mediaPath).toLowerCase();
-        zip.addFile(`media/rooms/${room.slug}${ext}`, Buffer.from(asset.data_base64, 'base64'));
+      if (!addStoredFile(zip, mediaPath, 'media/rooms', room.slug, exportState)) {
+        return res.status(413).render('error', { title: 'Export too large', status: 413, message: 'Tour export exceeds the size limit.' });
       }
     }
   }
@@ -971,7 +1025,7 @@ router.get('/tours/:id/export', requireEditor, (req, res) => {
 });
 
 // DELETE /dashboard/tours/:id
-router.delete('/tours/:id', requireEditor, (req, res) => {
+router.delete('/tours/:id', requireAdmin, (req, res) => {
   const rooms = db.prepare('SELECT * FROM rooms WHERE tour_id = ?').all(req.params.id);
   for (const room of rooms) unlinkFile(room.media_path || room.image_path);
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.id);
@@ -989,14 +1043,14 @@ router.get('/tours/:tourId/rooms', (req, res) => {
 });
 
 // GET /dashboard/tours/:tourId/rooms/new
-router.get('/tours/:tourId/rooms/new', requireEditor, (req, res) => {
+router.get('/tours/:tourId/rooms/new', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   res.render('dashboard/room-form', getRoomFormContext(tour));
 });
 
 // POST /dashboard/tours/:tourId/rooms
-router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
+router.post('/tours/:tourId/rooms', requireAdmin, (req, res, next) => {
   upload.single('media_file')(req, res, (err) => {
     const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
     if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
@@ -1004,8 +1058,13 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
         ? 'Image is too large. Maximum size is 100 MB.'
-        : (err.message || 'File upload failed.');
+        : 'File upload failed.';
       return res.render('dashboard/room-form', getRoomFormContext(tour, null, msg));
+    }
+    if (rejectMultipartCsrf(req, res)) return;
+    if (req.file && !upload.isValidMediaBuffer(fs.readFileSync(req.file.path), req.file.mimetype)) {
+      unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/room-form', getRoomFormContext(tour, null, 'Invalid media file.'));
     }
 
     const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url, embed_url, auto_rotate, auto_rotate_speed, default_hfov } = req.body;
@@ -1059,8 +1118,8 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
       setDefault ? 1 : 0,
       maxOrder + 1,
       auto_rotate === 'on' ? 1 : 0,
-      parseFloat(auto_rotate_speed) || 1.0,
-      parseFloat(default_hfov) || null
+      toNumber(auto_rotate_speed, 1.0),
+      toNumber(default_hfov, null)
     );
 
     res.redirect(`/dashboard/tours/${tour.id}/rooms`);
@@ -1068,7 +1127,7 @@ router.post('/tours/:tourId/rooms', requireEditor, (req, res, next) => {
 });
 
 // GET /dashboard/tours/:tourId/rooms/:roomId/edit
-router.get('/tours/:tourId/rooms/:roomId/edit', requireEditor, (req, res) => {
+router.get('/tours/:tourId/rooms/:roomId/edit', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
@@ -1077,7 +1136,7 @@ router.get('/tours/:tourId/rooms/:roomId/edit', requireEditor, (req, res) => {
 });
 
 // PUT /dashboard/tours/:tourId/rooms/:roomId
-router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
+router.put('/tours/:tourId/rooms/:roomId', requireAdmin, (req, res, next) => {
   upload.single('media_file')(req, res, (err) => {
     const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
     if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
@@ -1087,8 +1146,13 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
         ? 'Image is too large. Maximum size is 100 MB.'
-        : (err.message || 'File upload failed.');
+        : 'File upload failed.';
       return res.render('dashboard/room-form', getRoomFormContext(tour, room, msg));
+    }
+    if (rejectMultipartCsrf(req, res)) return;
+    if (req.file && !upload.isValidMediaBuffer(fs.readFileSync(req.file.path), req.file.mimetype)) {
+      unlinkFile('uploads/' + req.file.filename);
+      return res.render('dashboard/room-form', getRoomFormContext(tour, room, 'Invalid media file.'));
     }
 
     const { name, initial_pitch, initial_yaw, is_default, media_kind, external_video_url, embed_url, auto_rotate, auto_rotate_speed, default_hfov } = req.body;
@@ -1149,8 +1213,8 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
       parseFloat(initial_yaw) || 0,
       setDefault ? 1 : (room.is_default || 0),
       auto_rotate === 'on' ? 1 : 0,
-      parseFloat(auto_rotate_speed) || 1.0,
-      parseFloat(default_hfov) || null,
+      toNumber(auto_rotate_speed, 1.0),
+      toNumber(default_hfov, null),
       room.id
     );
 
@@ -1159,7 +1223,7 @@ router.put('/tours/:tourId/rooms/:roomId', requireEditor, (req, res, next) => {
 });
 
 // DELETE /dashboard/tours/:tourId/rooms/:roomId
-router.delete('/tours/:tourId/rooms/:roomId', requireEditor, (req, res) => {
+router.delete('/tours/:tourId/rooms/:roomId', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
@@ -1177,7 +1241,7 @@ router.delete('/tours/:tourId/rooms/:roomId', requireEditor, (req, res) => {
 });
 
 // POST /dashboard/tours/:tourId/rooms/:roomId/set-default
-router.post('/tours/:tourId/rooms/:roomId/set-default', requireEditor, (req, res) => {
+router.post('/tours/:tourId/rooms/:roomId/set-default', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
@@ -1190,7 +1254,7 @@ router.post('/tours/:tourId/rooms/:roomId/set-default', requireEditor, (req, res
 });
 
 // POST /dashboard/tours/:tourId/rooms/:roomId/hotspots
-router.post('/tours/:tourId/rooms/:roomId/hotspots', requireEditor, (req, res) => {
+router.post('/tours/:tourId/rooms/:roomId/hotspots', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
@@ -1198,12 +1262,13 @@ router.post('/tours/:tourId/rooms/:roomId/hotspots', requireEditor, (req, res) =
 
   const { hotspot_type, to_room_id, external_url, pitch, yaw, text } = req.body;
 
-  if (hotspot_type === 'external') {
-    if (!external_url || !external_url.trim()) {
+   if (hotspot_type === 'external') {
+     const safeExternalUrl = normalizeExternalUrl(external_url);
+     if (!safeExternalUrl) {
       return res.status(400).render('error', { title: 'Error', status: 400, message: 'External URL is required' });
     }
     db.prepare('INSERT INTO hotspots (from_room_id, to_room_id, pitch, yaw, text, url, is_external) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-      room.id, null, parseFloat(pitch) || 0, parseFloat(yaw) || 0, text || '', external_url.trim(), 1
+       room.id, null, parseFloat(pitch) || 0, parseFloat(yaw) || 0, text || '', safeExternalUrl, 1
     );
   } else {
     const toRoom = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(to_room_id, tour.id);
@@ -1219,7 +1284,7 @@ router.post('/tours/:tourId/rooms/:roomId/hotspots', requireEditor, (req, res) =
 });
 
 // POST /dashboard/tours/:tourId/rooms/:roomId/info-points
-router.post('/tours/:tourId/rooms/:roomId/info-points', requireEditor, (req, res) => {
+router.post('/tours/:tourId/rooms/:roomId/info-points', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
@@ -1249,7 +1314,7 @@ router.post('/tours/:tourId/rooms/:roomId/info-points', requireEditor, (req, res
 });
 
 // POST /dashboard/tours/:tourId/rooms/:roomId/move-up
-router.post('/tours/:tourId/rooms/:roomId/move-up', requireEditor, (req, res) => {
+router.post('/tours/:tourId/rooms/:roomId/move-up', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
@@ -1266,7 +1331,7 @@ router.post('/tours/:tourId/rooms/:roomId/move-up', requireEditor, (req, res) =>
 });
 
 // POST /dashboard/tours/:tourId/rooms/:roomId/move-down
-router.post('/tours/:tourId/rooms/:roomId/move-down', requireEditor, (req, res) => {
+router.post('/tours/:tourId/rooms/:roomId/move-down', requireAdmin, (req, res) => {
   const tour = db.prepare('SELECT * FROM tours WHERE id = ?').get(req.params.tourId);
   if (!tour) return res.status(404).render('error', { title: 'Not Found', status: 404, message: 'Tour not found' });
   const room = db.prepare('SELECT * FROM rooms WHERE id = ? AND tour_id = ?').get(req.params.roomId, tour.id);
@@ -1283,7 +1348,7 @@ router.post('/tours/:tourId/rooms/:roomId/move-down', requireEditor, (req, res) 
 });
 
 // PUT /dashboard/hotspots/:id
-router.put('/hotspots/:id', requireEditor, (req, res) => {
+router.put('/hotspots/:id', requireAdmin, (req, res) => {
   const hotspot = db.prepare(`
     SELECT h.*, r.tour_id, r.id AS room_id
     FROM hotspots h
@@ -1295,15 +1360,16 @@ router.put('/hotspots/:id', requireEditor, (req, res) => {
 
   const { hotspot_type, to_room_id, external_url, pitch, yaw, text } = req.body;
 
-  if (hotspot_type === 'external') {
-    if (!external_url || !external_url.trim()) {
+   if (hotspot_type === 'external') {
+     const safeExternalUrl = normalizeExternalUrl(external_url);
+     if (!safeExternalUrl) {
       return res.status(400).render('error', { title: 'Error', status: 400, message: 'External URL is required' });
     }
     db.prepare('UPDATE hotspots SET to_room_id = NULL, pitch = ?, yaw = ?, text = ?, url = ?, is_external = 1 WHERE id = ?').run(
       parseFloat(pitch) || 0,
       parseFloat(yaw) || 0,
       text || '',
-      external_url.trim(),
+       safeExternalUrl,
       hotspot.id
     );
   } else {
@@ -1324,7 +1390,7 @@ router.put('/hotspots/:id', requireEditor, (req, res) => {
 });
 
 // DELETE /dashboard/hotspots/:id
-router.delete('/hotspots/:id', requireEditor, (req, res) => {
+router.delete('/hotspots/:id', requireAdmin, (req, res) => {
   const hotspot = db.prepare(`
     SELECT h.*, r.tour_id, r.id AS room_id
     FROM hotspots h
@@ -1339,7 +1405,7 @@ router.delete('/hotspots/:id', requireEditor, (req, res) => {
 });
 
 // PUT /dashboard/info-points/:id
-router.put('/info-points/:id', requireEditor, (req, res) => {
+router.put('/info-points/:id', requireAdmin, (req, res) => {
   const infoPoint = db.prepare(`
     SELECT ip.*, r.tour_id, r.id AS room_id
     FROM info_points ip
@@ -1374,7 +1440,7 @@ router.put('/info-points/:id', requireEditor, (req, res) => {
 });
 
 // DELETE /dashboard/info-points/:id
-router.delete('/info-points/:id', requireEditor, (req, res) => {
+router.delete('/info-points/:id', requireAdmin, (req, res) => {
   const infoPoint = db.prepare(`
     SELECT ip.*, r.tour_id, r.id AS room_id
     FROM info_points ip

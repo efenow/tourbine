@@ -16,7 +16,7 @@
         <div class="alert alert-danger"><%= error %></div>
       <% } %>
       <p class="text-muted small">Upload a <code>.tourbine.zip</code> export (recommended) or <code>.tourbine.json</code> legacy export to import the tour, rooms, hotspots, info points, and media files.</p>
-      <form method="POST" action="/dashboard/tours/import?_csrf=<%= encodeURIComponent(csrfToken) %>" enctype="multipart/form-data">
+      <form method="POST" action="/dashboard/tours/import" enctype="multipart/form-data">
         <input type="hidden" name="_csrf" value="<%= csrfToken %>">
         <div class="mb-3">
           <label class="form-label" for="tour_file">Export file</label>
