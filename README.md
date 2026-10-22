@@ -25,6 +25,31 @@ It provides:
 - Node.js (LTS recommended) and npm
 - `better-sqlite3` is a native addon. Installing from source requires build tools (python3, make, g++); the Docker image installs them automatically.
 
+## Install scripts
+
+Official cross-platform installer scripts are maintained in the [`efenow/get-tourbine`](https://github.com/efenow/get-tourbine) repository.
+
+### Linux and macOS
+
+```bash
+curl -fsSL https://get.tourbine.efenow.xyz/install.sh | bash
+```
+
+### Windows PowerShell
+
+```powershell
+irm https://get.tourbine.efenow.xyz/install.ps1 | iex
+```
+
+Both installers ask you to choose an installation method:
+
+1. **Docker** — recommended for servers and production. Docker handles native dependencies and keeps the app isolated.
+2. **npm** — recommended for local development. Requires Node.js, npm, and native build tools for `better-sqlite3`.
+
+The Docker option is recommended on Windows production systems. It requires Docker Desktop or another Docker-compatible engine. The npm option is useful on macOS, Linux development machines, and WSL.
+
+Installers preserve Docker volumes containing the database and uploaded files. Failed dependency builds can download the selected source again and retry without the Docker build cache.
+
 ## Environment variables
 
 | Variable | Default | Description |
