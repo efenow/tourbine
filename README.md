@@ -20,6 +20,8 @@ It provides:
 - Cloudflared tunnel configuration UI
 - password reset CLI
 
+<img src=".github/codeflow-card.svg" alt="CodeFlow card" />
+
 ## Requirements
 
 - Node.js (LTS recommended) and npm
