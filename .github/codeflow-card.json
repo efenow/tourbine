@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "runs": [
+    {
+      "at": "2026-10-27T18:18:03.420Z",
+      "sha": "22c679f1031f0dade22f28a5a7c715807ee3e163",
+      "pr": null,
+      "actor": "efenow",
+      "files": 26,
+      "functions": 52,
+      "loc": 11504,
+      "languages": 7,
+      "topLanguages": [
+        {
+          "ext": "json",
+          "pct": 53,
+          "lines": 6078
+        },
+        {
+          "ext": "js",
+          "pct": 33,
+          "lines": 3755
+        },
+        {
+          "ext": "license",
+          "pct": 6,
+          "lines": 675
+        },
+        {
+          "ext": "md",
+          "pct": 5,
+          "lines": 588
+        },
+        {
+          "ext": "yml",
+          "pct": 2,
+          "lines": 236
+        }
+      ],
+      "dead": 0,
+      "deadPct": 0,
+      "circular": 0,
+      "godObjects": 1,
+      "avgCoupling": 0.5,
+      "securityIssues": 22,
+      "patterns": 5,
+      "duplicates": 0,
+      "layerViolations": 0,
+      "connections": 13,
+      "avgFnLines": 15.8,
+      "longestFn": 16,
+      "testFiles": 1,
+      "testRatio": 3.8,
+      "topFolders": [
+        {
+          "name": "root",
+          "count": 12
+        },
+        {
+          "name": "src",
+          "count": 10
+        },
+        {
+          "name": "public",
+          "count": 2
+        },
+        {
+          "name": ".serena",
+          "count": 1
+        },
+        {
+          "name": "tests",
+          "count": 1
+        }
+      ],
+      "folders": 5,
+      "grade": "C",
+      "score": 77,
+      "topBlast": {
+        "path": "src/tour-data.js",
+        "direct": 3,
+        "transitive": 3,
+        "total": 6
+      },
+      "fragility": [
+        {
+          "path": "src/tour-data.js",
+          "direct": 3,
+          "transitive": 3,
+          "total": 6
+        },
+        {
+          "path": "src/auth.js",
+          "direct": 2,
+          "transitive": 2,
+          "total": 4
+        },
+        {
+          "path": "src/csrf.js",
+          "direct": 2,
+          "transitive": 2,
+          "total": 4
+        }
+      ]
+    }
+  ]
+}
